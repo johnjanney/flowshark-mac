@@ -1,12 +1,15 @@
 # Installing FlowShark on a Mac
 
-This guide covers both ways of getting FlowShark onto your Mac:
+This guide covers three ways of getting FlowShark onto your Mac:
 
 - **[Option A — Install a release build](#option-a--install-a-release-build)**
   if a `.dmg` is attached to a release on GitHub. Takes about a minute.
 - **[Option B — Build it yourself from the repository](#option-b--build-it-yourself-from-the-repository)**
   if there is no release yet, or you want to build from a specific commit.
   Takes about 20 minutes the first time, mostly waiting for Rust to compile.
+- **[Option C — Install a build from GitHub Actions](#option-c--install-a-build-from-github-actions)**
+  to get the newest build without waiting for a release. Takes a minute, and
+  needs one Terminal command because the build is unsigned.
 
 If a step does not go as described, jump to
 [Troubleshooting](#troubleshooting) at the end.
@@ -192,6 +195,44 @@ Follow the next section once; after that it opens normally.
 
 ---
 
+## Option C — Install a build from GitHub Actions
+
+Every push builds an installable disk image. This is the quickest way to get a
+current build without waiting for a release.
+
+> **These builds are unsigned.** macOS will say the app "is damaged". It is
+> not — that is the wording macOS uses for an app that was downloaded and is
+> not notarised. Step 4 clears it.
+
+1. Open <https://github.com/johnjanney/flowshark-mac/actions>, signed in to
+   GitHub.
+2. Click the newest run with a green tick, then scroll to **Artifacts** and
+   download **FlowShark-unsigned-dmg**.
+3. Unzip it, open the `.dmg` inside, and drag **FlowShark** to your
+   **Applications** folder.
+4. Remove the download quarantine flag. In Terminal:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/FlowShark.app
+   ```
+
+   It prints nothing when it works.
+
+5. Open FlowShark from Applications. It opens normally from now on.
+
+If it still refuses, the bundle has no signature at all. Give it an ad-hoc one
+and clear the flag again:
+
+```bash
+codesign --force --deep --sign - /Applications/FlowShark.app
+xattr -dr com.apple.quarantine /Applications/FlowShark.app
+```
+
+An ad-hoc signature is enough to run the app on this Mac. It is not enough to
+hand it to anyone else — that needs a Developer ID and notarisation.
+
+---
+
 ## Opening an unsigned build
 
 A build you made yourself has no Apple signature, so Gatekeeper stops it the
@@ -320,11 +361,20 @@ not touched.
 
 ## Troubleshooting
 
-### "FlowShark is damaged and can't be opened"
+### "FlowShark is damaged and can't be opened. You should move it to the Trash."
 
-macOS says this about an unsigned app whose quarantine flag is set, even when
-nothing is wrong with it. Use
-[Method 3](#method-3--remove-the-quarantine-flag-in-terminal).
+The app is fine. macOS uses this wording for any app that carries the download
+quarantine flag and is not notarised, which is every build made without a
+Developer ID certificate. **Do not move it to the Trash.** Click **Cancel**,
+then clear the flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/FlowShark.app
+```
+
+Adjust the path if the app is somewhere other than Applications. Then open it
+again. If it still refuses, see the ad-hoc signing fallback in
+[Option C](#option-c--install-a-build-from-github-actions).
 
 ### "You can't open the application because it is not supported on this Mac"
 
