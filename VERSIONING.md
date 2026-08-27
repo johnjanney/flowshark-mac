@@ -144,8 +144,11 @@ partly loaded. That behaviour is covered by a test; do not weaken it.
    ```bash
    git commit -am "Release 0.2.0"
    git tag -a v0.2.0 -m "FlowShark 0.2.0"
-   git push && git push --tags
+   git push && git push origin v0.2.0
    ```
+
+   The tag is what triggers the release. Pushing the branch alone does
+   nothing.
 
 5. **Wait for CI.** The release workflow builds on a macOS runner, signs with
    the Developer ID certificate, notarises, staples the ticket, builds the
@@ -179,6 +182,14 @@ and `APPLE_API_KEY_PATH`. A key does not stop working when someone changes
 their Apple ID password, and it is not tied to one person's account.
 
 Without these secrets the release job still builds and produces a DMG — it is
-simply unsigned, and macOS will warn on first launch. CI's `bundle` job builds
-an unsigned bundle on every push for exactly that reason: so a signing problem
-is never the first thing you discover at release time.
+simply unsigned, and macOS will warn on first launch.
+
+CI's `bundle` job builds an unsigned `.app` and `.dmg` on **every push** and
+uploads the disk image as an artifact named `FlowShark-unsigned-dmg`. Two
+reasons: a signing problem is never the first thing you discover at release
+time, and there is always an installable build to hand without cutting a
+release. Download it from the run's page under **Artifacts**.
+
+That job also asserts the things that fail silently — that both the `.app` and
+the `.dmg` exist, and that `document.icns` is really inside the bundle rather
+than merely referenced by `Info.plist`.

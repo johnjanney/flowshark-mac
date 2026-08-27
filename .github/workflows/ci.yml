@@ -109,6 +109,9 @@ jobs:
 
   bundle:
     name: Unsigned bundle
+    # Produces an installable .dmg on every push. It is unsigned, so macOS
+    # warns on first launch — see INSTALLATION.md. Signed builds come from the
+    # release workflow, which needs the Developer ID secrets.
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -128,12 +131,31 @@ jobs:
 
       - run: npm ci
 
-      - name: Build the app bundle
-        # No signing secrets are used here; this job only proves the bundle
-        # builds. Signing and notarisation happen in the release workflow.
-        run: npm run tauri:build -- --bundles app
+      - name: Build the app and the disk image
+        # No signing secrets are used here, so the result is unsigned.
+        # Signing and notarisation happen in the release workflow.
+        run: npm run tauri:build
 
-      - uses: actions/upload-artifact@v4
+      - name: Report what was built
+        run: |
+          BUNDLE=src-tauri/target/aarch64-apple-darwin/release/bundle
+          APP="$(find "$BUNDLE/macos" -maxdepth 1 -name '*.app' | head -n 1)"
+          DMG="$(find "$BUNDLE/dmg" -maxdepth 1 -name '*.dmg' | head -n 1)"
+          if [ -z "$APP" ] || [ -z "$DMG" ]; then
+            echo "Expected both an .app and a .dmg; got app='$APP' dmg='$DMG'." >&2
+            exit 1
+          fi
+          echo "::notice::Built $(basename "$DMG") ($(du -h "$DMG" | cut -f1)), unsigned."
+          # The document icon must actually be inside the bundle, or the Finder
+          # shows a blank page for .flowshark files.
+          test -f "$APP/Contents/Resources/document.icns" \
+            || { echo "document.icns is missing from the bundle." >&2; exit 1; }
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :UTExportedTypeDeclarations:0:UTTypeIdentifier' "$APP/Contents/Info.plist"
+
+      - name: Upload the disk image
+        uses: actions/upload-artifact@v4
         with:
-          name: FlowShark-unsigned
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+          name: FlowShark-unsigned-dmg
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
