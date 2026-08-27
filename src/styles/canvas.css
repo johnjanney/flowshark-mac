@@ -166,6 +166,35 @@
   fill: var(--text-tertiary);
 }
 
+/* Rulers ----------------------------------------------------------------- */
+
+.ruler-band {
+  fill: var(--surface-panel);
+  stroke: var(--border-soft);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.ruler-tick {
+  stroke: var(--text-tertiary);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.ruler-label {
+  fill: var(--text-tertiary);
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ruler-selection {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
 /* Inline text editor ----------------------------------------------------- */
 
 .text-editor-layer {

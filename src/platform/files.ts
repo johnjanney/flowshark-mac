@@ -79,6 +79,37 @@ function openWithFileInput(): Promise<OpenResult | null> {
   });
 }
 
+/** Choose an image file to place on the canvas. */
+export async function openImageDialog(): Promise<{ path: string; bytes: Uint8Array } | null> {
+  if (isNative()) {
+    const { open } = await dialog();
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+    });
+    const path = Array.isArray(selected) ? selected[0] : selected;
+    if (!path) return null;
+    const result = await invoke<ArrayBuffer | number[]>('read_binary_file', { path });
+    const bytes = result instanceof ArrayBuffer ? new Uint8Array(result) : new Uint8Array(result);
+    return { path, bytes };
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg,image/webp,image/gif';
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      if (!file) {
+        resolve(null);
+        return;
+      }
+      resolve({ path: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+    });
+    input.addEventListener('cancel', () => resolve(null));
+    input.click();
+  });
+}
+
 /** Read a document that the Finder or a drag onto the Dock icon handed us. */
 export async function readDocument(path: string): Promise<string> {
   if (!isNative()) throw new Error('Reading files by path needs the macOS application.');

@@ -86,6 +86,7 @@ import {
   chooseSavePath,
   fileModifiedAt,
   openDocumentDialog,
+  openImageDialog,
   readDocument,
   revealInFinder,
   showMessage,
@@ -94,10 +95,19 @@ import {
 } from './platform/files';
 import {
   ELEMENT_CLIPBOARD_MARKER,
+  readImage as readPasteboardImage,
   readText as readClipboardText,
   writePng,
   writeText as writeClipboardText,
 } from './platform/clipboard';
+import { onFileDrop, readFileBytes } from './platform/dragdrop';
+import {
+  IMPORTABLE_IMAGE_TYPES,
+  imageTypeForPath,
+  importImage,
+  isDocumentPath,
+  rgbaToPng,
+} from './io/import';
 import { applyHostAttributes, isNative } from './platform/environment';
 import {
   closeWindow,
@@ -153,6 +163,7 @@ export class FlowSharkApp {
       },
       refreshOverlay: () => this.scheduleOverlay(),
       announce: (message) => this.store.setStatusMessage(message),
+      filesDropped: (files, at) => void this.handleBrowserFileDrop(files, at),
     });
     this.toolbar = new Toolbar(this.store, this.registry);
     this.sidebar = new Sidebar(this.store, this.registry);
@@ -205,6 +216,7 @@ export class FlowSharkApp {
     );
 
     await onOpenFileRequest((path) => void this.openPath(path));
+    await onFileDrop((event) => void this.handleFileDrop(event.paths, event.position));
     const launchFile = await pendingLaunchFile();
 
     this.onResize();
@@ -766,7 +778,10 @@ export class FlowSharkApp {
 
   async paste(matchStyle = false): Promise<void> {
     const text = await readClipboardText();
-    if (!text) return;
+    if (!text) {
+      await this.pasteImageFromPasteboard();
+      return;
+    }
 
     if (text.startsWith(ELEMENT_CLIPBOARD_MARKER)) {
       this.pasteElements(text.slice(ELEMENT_CLIPBOARD_MARKER.length), matchStyle);
@@ -1129,7 +1144,12 @@ export class FlowSharkApp {
         run: () => store.setTool('connector'),
       },
       { id: 'insert.textBox', title: 'Text Box', run: () => this.insertAtCentre('text-box') },
-      { id: 'insert.image', title: 'Image Placeholder', run: () => this.insertAtCentre('image') },
+      { id: 'insert.image', title: 'Image…', run: () => this.insertImage() },
+      {
+        id: 'insert.imagePlaceholder',
+        title: 'Image Placeholder',
+        run: () => this.insertAtCentre('image'),
+      },
       {
         id: 'insert.connectorLabel',
         title: 'Label on Connector',
@@ -1347,6 +1367,29 @@ export class FlowSharkApp {
         run: () => setHidden(store, true),
         isEnabled: () => this.hasSelection(),
       },
+      {
+        id: 'arrange.show',
+        title: 'Show Hidden Elements',
+        run: () => {
+          const hidden = Object.values(store.document.elements)
+            .filter((element) => element.hidden)
+            .map((element) => element.id);
+          if (hidden.length === 0) return;
+          store.mutate(
+            'Show',
+            () => {
+              for (const id of hidden) {
+                const element = store.document.elements[id];
+                if (element) element.hidden = false;
+              }
+            },
+            { scope: hidden },
+          );
+          store.setSelection(hidden);
+        },
+        isEnabled: () =>
+          Object.values(store.document.elements).some((element) => element.hidden),
+      },
       ...(
         [
           ['bringForward', 'Bring Forward', 'forward', 'Cmd+Alt+F'],
@@ -1487,6 +1530,121 @@ export class FlowSharkApp {
     ];
 
     this.registry.registerAll(commands);
+  }
+
+  private viewCentre(): { x: number; y: number } {
+    const { width, height } = this.store.getState().view.viewport;
+    return this.renderer.screenToCanvas({ x: width / 2, y: height / 2 });
+  }
+
+  /** Choose an image file and place it on the canvas. */
+  async insertImage(): Promise<void> {
+    try {
+      const chosen = await openImageDialog();
+      if (!chosen) return;
+      const mimeType = imageTypeForPath(chosen.path);
+      if (!mimeType || !IMPORTABLE_IMAGE_TYPES.has(mimeType)) {
+        showToast('FlowShark can place PNG, JPEG, WebP, and GIF images.', 'warning');
+        return;
+      }
+      await importImage(this.store, chosen.bytes, mimeType, {
+        at: this.viewCentre(),
+        name: chosen.path.split('/').pop() ?? 'Image',
+      });
+      showToast('Image placed.');
+    } catch (error) {
+      await this.reportError('The image could not be placed.', error);
+    }
+  }
+
+  private async pasteImageFromPasteboard(): Promise<void> {
+    try {
+      const image = await readPasteboardImage();
+      if (!image) return;
+      const png = await rgbaToPng(image.rgba, image.width, image.height);
+      await importImage(this.store, png, 'image/png', {
+        at: this.viewCentre(),
+        name: 'Pasted image',
+      });
+      showToast('Pasted an image.');
+    } catch (error) {
+      await this.reportError('The image on the pasteboard could not be pasted.', error);
+    }
+  }
+
+  /**
+   * Handle files dropped onto the window: a `.flowshark` file opens, an image
+   * is placed where it was dropped, and anything else is reported.
+   */
+  private async handleFileDrop(
+    paths: readonly string[],
+    position: { x: number; y: number },
+  ): Promise<void> {
+    if (paths.length === 0) return;
+    const documents = paths.filter(isDocumentPath);
+    if (documents.length > 0) {
+      await this.openPath(documents[0]);
+      if (documents.length > 1) {
+        showToast('Only the first FlowShark document was opened.', 'warning');
+      }
+      return;
+    }
+
+    const rect = this.surface.getBoundingClientRect();
+    const at = this.renderer.screenToCanvas({
+      x: position.x - rect.left,
+      y: position.y - rect.top,
+    });
+
+    let placed = 0;
+    for (const path of paths) {
+      const mimeType = imageTypeForPath(path);
+      if (!mimeType) continue;
+      try {
+        const bytes = await readFileBytes(path);
+        await importImage(this.store, bytes, mimeType, {
+          at: { x: at.x + placed * 24, y: at.y + placed * 24 },
+          name: path.split('/').pop() ?? 'Image',
+        });
+        placed += 1;
+      } catch (error) {
+        await this.reportError('That image could not be placed.', error);
+        return;
+      }
+    }
+    if (placed === 0) {
+      showToast('FlowShark opens .flowshark documents and places PNG, JPEG, WebP, and GIF images.', 'warning');
+    } else {
+      showToast(`Placed ${placed} image${placed === 1 ? '' : 's'}.`);
+    }
+  }
+
+  /** The browser fallback for dropped files. */
+  private async handleBrowserFileDrop(
+    files: FileList,
+    at: { x: number; y: number },
+  ): Promise<void> {
+    let placed = 0;
+    for (const file of Array.from(files)) {
+      if (isDocumentPath(file.name)) {
+        if (!(await this.confirmDiscard())) return;
+        this.applyLoadedDocument(await file.text(), file.name);
+        return;
+      }
+      const mimeType = file.type || imageTypeForPath(file.name) || '';
+      if (!IMPORTABLE_IMAGE_TYPES.has(mimeType)) continue;
+      try {
+        await importImage(this.store, new Uint8Array(await file.arrayBuffer()), mimeType, {
+          at: { x: at.x + placed * 24, y: at.y + placed * 24 },
+          name: file.name,
+        });
+        placed += 1;
+      } catch (error) {
+        await this.reportError('That image could not be placed.', error);
+        return;
+      }
+    }
+    if (placed > 0) showToast(`Placed ${placed} image${placed === 1 ? '' : 's'}.`);
   }
 
   private insertAtCentre(shapeKey: string): void {

@@ -36,6 +36,7 @@ async function main() {
       JSON.stringify({ showWelcomeOnLaunch: false }),
     );
     window.confirm = () => false;
+    window.alert = () => {};
   });
 
   await page.goto(url, { waitUntil: 'networkidle' });
@@ -247,6 +248,46 @@ async function main() {
     if (background === 'rgb(242, 243, 246)') throw new Error('the dark palette did not apply');
     await page.screenshot({ path: `${SHOTS}/05-dark.png` });
     await page.emulateMedia({ colorScheme: 'light' });
+  });
+
+  await step('shows rulers when they are switched on', async () => {
+    await page.evaluate(() => {
+      const grid = [...document.querySelectorAll('#inspector .row-inline')];
+      void grid;
+    });
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => {
+      const menu = [...document.querySelectorAll('.fallback-menubar .menu-root > button')];
+      menu.find((node) => node.textContent === 'View')?.click();
+    });
+    await page.waitForTimeout(120);
+    await page.evaluate(() => {
+      const items = [...document.querySelectorAll('.menu-popup button')];
+      items.find((node) => node.textContent?.includes('Show Rulers'))?.click();
+    });
+    await page.waitForTimeout(250);
+    const ticks = await page.$$eval('#overlay .ruler-tick', (nodes) => nodes.length);
+    if (ticks < 2) throw new Error(`expected ruler ticks, saw ${ticks}`);
+    await page.screenshot({ path: `${SHOTS}/06-rulers.png` });
+  });
+
+  await step('places an image dropped onto the canvas', async () => {
+    const dataTransfer = await page.evaluateHandle(() => {
+      // A 4x4 red PNG: the smallest thing that proves the import path works.
+      const base64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR42mO4Y2PzHxkzkC4AAO2YJTHTor4nAAAAAElFTkSuQmCC';
+      const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], 'red.png', { type: 'image/png' }));
+      return transfer;
+    });
+    const before = await count();
+    await page.dispatchEvent('#canvas-scroll', 'drop', { dataTransfer });
+    await page.waitForTimeout(600);
+    const after = await count();
+    if (after !== before + 1) throw new Error(`dropping an image added ${after - before} elements`);
+    const drawn = await page.$$eval('#canvas-root image', (nodes) => nodes.length);
+    if (drawn === 0) throw new Error('the dropped image was not drawn');
   });
 
   await step('exposes an accessible outline of the diagram', async () => {

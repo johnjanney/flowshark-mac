@@ -45,6 +45,8 @@ export interface InteractionCallbacks {
   refreshOverlay(): void;
   /** Announce something to assistive technology and the status bar. */
   announce(message: string): void;
+  /** Files dropped through the DOM. The macOS shell delivers paths instead. */
+  filesDropped(files: FileList, at: Point): void;
 }
 
 type Gesture =
@@ -816,13 +818,16 @@ export class CanvasInteraction {
   private onDrop = (event: DragEvent): void => {
     this.renderer.overlayState.dropPreview = null;
     const shapeKey = event.dataTransfer?.getData('application/x-flowshark-shape');
+    const canvasPoint = this.renderer.screenToCanvas(this.renderer.pointerPosition(event));
     if (shapeKey) {
       event.preventDefault();
-      const canvasPoint = this.renderer.screenToCanvas(this.renderer.pointerPosition(event));
       const placed = addShape(this.store, shapeKey, {
         center: snapPointToGrid(canvasPoint, this.store.document.canvas),
       });
       if (placed) this.callbacks.announce('Shape added.');
+    } else if (event.dataTransfer?.files?.length) {
+      event.preventDefault();
+      this.callbacks.filesDropped(event.dataTransfer.files, canvasPoint);
     }
     this.callbacks.refreshOverlay();
   };

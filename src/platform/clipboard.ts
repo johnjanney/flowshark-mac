@@ -52,13 +52,32 @@ export async function writePng(bytes: Uint8Array): Promise<void> {
   await clipboard.write([new ClipboardItem({ 'image/png': new Blob([buffer], { type: 'image/png' }) })]);
 }
 
-export async function readPng(): Promise<Uint8Array | null> {
+export interface PasteboardImage {
+  /** Raw RGBA pixels. */
+  rgba: Uint8Array;
+  width: number;
+  height: number;
+}
+
+/**
+ * Read an image from the pasteboard.
+ *
+ * The macOS path returns raw pixels, which callers re-encode as PNG before
+ * embedding; the browser path decodes the PNG it finds on the clipboard so
+ * both hosts hand back the same shape of data.
+ */
+export async function readImage(): Promise<PasteboardImage | null> {
   if (isNative()) {
     try {
-      const { readImage } = await import('@tauri-apps/plugin-clipboard-manager');
-      const image = await readImage();
+      const { readImage: read } = await import('@tauri-apps/plugin-clipboard-manager');
+      const image = await read();
+      const size = await image.size();
       const rgba = await image.rgba();
-      return rgba instanceof Uint8Array ? rgba : new Uint8Array(rgba);
+      return {
+        rgba: rgba instanceof Uint8Array ? rgba : new Uint8Array(rgba),
+        width: size.width,
+        height: size.height,
+      };
     } catch {
       return null;
     }
@@ -66,10 +85,22 @@ export async function readPng(): Promise<Uint8Array | null> {
   try {
     const items = await navigator.clipboard?.read();
     for (const item of items ?? []) {
-      if (item.types.includes('image/png')) {
-        const blob = await item.getType('image/png');
-        return new Uint8Array(await blob.arrayBuffer());
-      }
+      const type = item.types.find((entry) => entry.startsWith('image/'));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext('2d');
+      if (!context) return null;
+      context.drawImage(bitmap, 0, 0);
+      const data = context.getImageData(0, 0, bitmap.width, bitmap.height);
+      return {
+        rgba: new Uint8Array(data.data.buffer.slice(0)),
+        width: bitmap.width,
+        height: bitmap.height,
+      };
     }
   } catch {
     // Reading images from the pasteboard needs permission in a browser.

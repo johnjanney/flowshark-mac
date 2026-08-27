@@ -35,6 +35,7 @@ pub fn run() {
             files::read_text_file,
             files::save_text_atomic,
             files::save_binary_atomic,
+            files::read_binary_file,
             files::file_modified_at,
             windows::open_new_window,
             windows::take_pending_open_file,

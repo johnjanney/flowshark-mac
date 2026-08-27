@@ -13,6 +13,9 @@ use std::time::UNIX_EPOCH;
 /// Documents are plain JSON; anything much larger than this is not a diagram.
 const MAX_DOCUMENT_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Imported images are embedded in the document, so keep them to a sane size.
+const MAX_IMPORT_BYTES: u64 = 64 * 1024 * 1024;
+
 fn describe(error: &std::io::Error, path: &Path) -> String {
     format!("{} ({})", error, path.display())
 }
@@ -78,6 +81,25 @@ pub fn save_text_atomic(path: String, contents: String) -> Result<(), String> {
 #[tauri::command]
 pub fn save_binary_atomic(path: String, contents: Vec<u8>) -> Result<(), String> {
     write_atomic(&path, &contents)
+}
+
+/// Read a file as raw bytes.
+///
+/// The bytes come back as a binary IPC response rather than a JSON array, so
+/// importing a photograph does not turn a few megabytes into tens of megabytes
+/// of JSON on the way across.
+#[tauri::command]
+pub fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> {
+    let target = Path::new(&path);
+    let metadata = fs::metadata(target).map_err(|error| describe(&error, target))?;
+    if metadata.len() > MAX_IMPORT_BYTES {
+        return Err(format!(
+            "This file is {} MB, which is larger than FlowShark imports.",
+            metadata.len() / (1024 * 1024)
+        ));
+    }
+    let bytes = fs::read(target).map_err(|error| describe(&error, target))?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Modification time in milliseconds since the Unix epoch.

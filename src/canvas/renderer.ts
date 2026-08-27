@@ -392,6 +392,8 @@ export class CanvasRenderer {
 
     for (const guide of this.overlayState.guides) root.append(...this.guideMarks(guide));
 
+    if (doc.canvas.showRulers) root.append(this.rulers(bounds));
+
     if (this.overlayState.marquee) {
       const topLeft = toScreen({
         x: this.overlayState.marquee.x,
@@ -567,6 +569,98 @@ export class CanvasRenderer {
       );
     });
     return nodes;
+  }
+
+  /**
+   * Rulers along the top and left edges.
+   *
+   * The tick spacing steps through 1, 2, 5, 10, 20, 50 … so the labels stay
+   * readable at every zoom level, and the current selection is shaded on both
+   * rulers the way a page layout application does it.
+   */
+  private rulers(selection: Rect | null): SVGGElement {
+    const { zoom } = this.store.getState().view;
+    const { width, height } = this.viewportSize();
+    const thickness = 20;
+    const group = svg('g', { class: 'fs-rulers', 'aria-hidden': 'true' });
+
+    group.append(
+      svg('rect', { class: 'ruler-band', x: 0, y: 0, width, height: thickness }),
+      svg('rect', { class: 'ruler-band', x: 0, y: 0, width: thickness, height }),
+    );
+
+    // Pick a tick spacing that is at least 60 screen pixels apart.
+    const target = 60 / zoom;
+    const magnitude = 10 ** Math.floor(Math.log10(Math.max(target, 1)));
+    const step =
+      [1, 2, 5, 10].map((factor) => factor * magnitude).find((value) => value >= target) ??
+      magnitude * 10;
+
+    const region = this.visibleRegion();
+    const startX = Math.floor(region.x / step) * step;
+    for (let x = startX; x < region.x + region.width; x += step) {
+      const screenX = this.canvasToScreen({ x, y: 0 }).x;
+      if (screenX < thickness) continue;
+      group.append(
+        svg('line', {
+          class: 'ruler-tick',
+          x1: round(screenX, 1),
+          y1: thickness - 6,
+          x2: round(screenX, 1),
+          y2: thickness,
+        }),
+        svg('text', { class: 'ruler-label', x: round(screenX + 3, 1), y: 11 }, [
+          String(Math.round(x)),
+        ]),
+      );
+    }
+
+    const startY = Math.floor(region.y / step) * step;
+    for (let y = startY; y < region.y + region.height; y += step) {
+      const screenY = this.canvasToScreen({ x: 0, y }).y;
+      if (screenY < thickness) continue;
+      group.append(
+        svg('line', {
+          class: 'ruler-tick',
+          x1: thickness - 6,
+          y1: round(screenY, 1),
+          x2: thickness,
+          y2: round(screenY, 1),
+        }),
+        svg(
+          'text',
+          {
+            class: 'ruler-label',
+            x: 3,
+            y: round(screenY - 3, 1),
+            transform: `rotate(-90 3 ${round(screenY - 3, 1)})`,
+          },
+          [String(Math.round(y))],
+        ),
+      );
+    }
+
+    if (selection) {
+      const topLeft = this.canvasToScreen(selection);
+      group.append(
+        svg('rect', {
+          class: 'ruler-selection',
+          x: round(topLeft.x, 1),
+          y: 0,
+          width: round(selection.width * zoom, 1),
+          height: thickness,
+        }),
+        svg('rect', {
+          class: 'ruler-selection',
+          x: 0,
+          y: round(topLeft.y, 1),
+          width: thickness,
+          height: round(selection.height * zoom, 1),
+        }),
+      );
+    }
+
+    return group;
   }
 
   private guideMarks(guide: Guide): SVGElement[] {
