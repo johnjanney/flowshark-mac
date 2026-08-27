@@ -97,35 +97,58 @@ accessibility review; or an iPad version entering the roadmap. See
 ### D-003: Bundle identifier and document type
 
 **Context.** The brief uses `com.example.flowshark` as a placeholder and asks
-for the real reverse-domain identifier before Milestone 0 ends.
+for the real reverse-domain identifier before Milestone 0 ends. The project has
+no product domain, and FlowShark exists as two repositories:
+`johnjanney/flowshark` for the Windows version and `johnjanney/flowshark-mac`
+for this one.
 
-**Decision.** Use `io.github.johnjanney.flowshark` for the bundle and
-`io.github.johnjanney.flowshark.document` for the exported UTI. The document
-type conforms to `public.data`, `public.content`, and `public.json`, and claims
-the `flowshark` extension and the `application/vnd.flowshark+json` MIME type.
+**Decision.** Use `io.github.johnjanney.flowshark-mac` for the bundle and
+`io.github.johnjanney.flowshark-mac.document` for the exported UTI. The
+document type conforms to `public.data`, `public.content`, and `public.json`,
+and claims the `flowshark` extension and the `application/vnd.flowshark+json`
+MIME type.
 
-**Reasoning.** A reverse-DNS identifier has to be derived from a domain the
-project actually controls, and the project has no product domain. It does
-control `johnjanney.github.io`, by virtue of owning the GitHub account, so
-`io.github.johnjanney` is a genuine claim rather than a guess. This is the same
-convention Flathub and other package systems use for projects hosted on GitHub
-without a domain of their own.
+**Reasoning.** A reverse-DNS identifier must come from a domain the project
+controls. There is no product domain, but the GitHub account owns
+`johnjanney.github.io`, and each repository owns a path beneath it. The
+authority for `io.github.johnjanney.<name>` therefore comes from
+`johnjanney.github.io/<name>`, which means `<name>` is the *repository* name —
+so this app is `flowshark-mac`, not `flowshark`. That namespace already belongs
+to the Windows repository. This is the same derivation Flathub and other
+package systems use for projects hosted on GitHub without a domain.
 
-An earlier draft used `com.flowshark.app`, which assumed control of
-`flowshark.com`. It did not, so that identifier was wrong and has been
-replaced.
+Two earlier drafts were wrong and are recorded so the reasoning is not
+repeated: `com.flowshark.app` assumed control of `flowshark.com`, which the
+project does not have; `io.github.johnjanney.flowshark` took the project name
+rather than the repository name, and so claimed the Windows repository's
+namespace.
+
+Hyphens are permitted: Tauri documents the identifier as "alphanumeric
+characters (A-Z, a-z, and 0-9), hyphens (-), and periods (.)", and Apple allows
+the same set in `CFBundleIdentifier`.
 
 **Consequences.** These strings appear in `src-tauri/tauri.conf.json` and
 `src-tauri/Info.plist`. Changing the identifier later would mean macOS treats
 the app as a different application — preferences are lost and the Finder's
 document type registration has to be rebuilt — and changing the *UTI* later
 would additionally orphan the file association on machines that had already
-seen the old one. Settling it before the first release is what avoids both.
+seen the old one. Settling both before the first release is what avoids that.
 
-**What would reverse it.** Registering a product domain. If that happens before
-the first public release, changing it is free; afterwards it is not, and it
-would be better to keep this identifier and simply use the new domain for the
-website.
+The bundle identifier is macOS-only, so the Windows app cannot collide with it
+whatever it is called; the point of matching the repository is that the
+identifier's authority is derived from the repository path, not that the two
+apps would otherwise clash.
+
+**One thing to watch.** The UTI names a *file format*, and a format outlives a
+port. If the iPad companion in §16 is ever built, it must declare **this same
+UTI**, `io.github.johnjanney.flowshark-mac.document`, rather than minting a new
+one from its own repository — otherwise the two apps would not recognise each
+other's documents. The `-mac` in a UTI shared with an iPad app reads oddly; that
+is a cosmetic cost, and it is much cheaper than a split file format.
+
+**What would reverse it.** Registering a product domain before the first public
+release, when changing it is still free. Afterwards it is not, and the better
+course would be to keep this identifier and use the new domain for the website.
 
 ### D-004: Developer ID and a DMG, with no App Sandbox
 
@@ -714,7 +737,7 @@ own:
 
 | Question | Status |
 |---|---|
-| Bundle identifier | Settled: `io.github.johnjanney.flowshark` (D-003) |
+| Bundle identifier | Settled: `io.github.johnjanney.flowshark-mac` (D-003) |
 | Product name | Kept; a trademark search is outstanding (D-018) |
 | Gate 1, on Apple Silicon | Must be re-run on real hardware |
 | Gate 2, with VoiceOver | Must be run on real hardware |

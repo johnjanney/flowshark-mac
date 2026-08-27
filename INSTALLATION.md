@@ -308,9 +308,9 @@ FlowShark has no built-in updater in this release.
 2. Optionally remove its preferences:
 
    ```bash
-   rm -rf ~/Library/WebKit/io.github.johnjanney.flowshark
-   rm -rf ~/Library/Application\ Support/io.github.johnjanney.flowshark
-   rm -rf ~/Library/Caches/io.github.johnjanney.flowshark
+   rm -rf ~/Library/WebKit/io.github.johnjanney.flowshark-mac
+   rm -rf ~/Library/Application\ Support/io.github.johnjanney.flowshark-mac
+   rm -rf ~/Library/Caches/io.github.johnjanney.flowshark-mac
    ```
 
 Your `.flowshark` documents are ordinary files wherever you saved them and are

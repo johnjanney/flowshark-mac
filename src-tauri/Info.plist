@@ -20,7 +20,7 @@
       <string>document.icns</string>
       <key>LSItemContentTypes</key>
       <array>
-        <string>io.github.johnjanney.flowshark.document</string>
+        <string>io.github.johnjanney.flowshark-mac.document</string>
       </array>
     </dict>
   </array>
@@ -29,7 +29,7 @@
   <array>
     <dict>
       <key>UTTypeIdentifier</key>
-      <string>io.github.johnjanney.flowshark.document</string>
+      <string>io.github.johnjanney.flowshark-mac.document</string>
       <key>UTTypeDescription</key>
       <string>FlowShark Document</string>
       <key>UTTypeIconFile</key>
@@ -54,10 +54,12 @@
     </dict>
   </array>
 
-  <key>NSHumanReadableCopyright</key>
-  <string>Copyright © 2026 FlowShark</string>
-  <key>LSApplicationCategoryType</key>
-  <string>public.app-category.graphics-design</string>
+  <!--
+    Only keys Tauri does not already generate belong here. It writes
+    CFBundleIdentifier, CFBundleShortVersionString, LSMinimumSystemVersion,
+    LSApplicationCategoryType, and NSHumanReadableCopyright from
+    tauri.conf.json, and merges this file over the result.
+  -->
   <key>NSSupportsAutomaticGraphicsSwitching</key>
   <true/>
 </dict>

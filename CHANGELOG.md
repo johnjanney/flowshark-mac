@@ -207,7 +207,10 @@ covers everything in the MVP scope of the project brief.
 - Open Recent.
 - Document type registration, so the Finder shows a FlowShark document icon,
   opens documents on a double-click, offers FlowShark under Open With, and
-  accepts a drag onto the Dock icon.
+  accepts a drag onto the Dock icon. The document icon is bundled as a resource
+  so it is actually present: only the application icon is copied from the icon
+  list, and a document icon referenced but not bundled leaves the Finder
+  showing a blank page.
 - Import PNG, JPEG, WebP, and GIF images by dropping, pasting, or choosing
   them. Images are embedded so a document stays self-contained.
 - Dropping a `.flowshark` file onto a window opens it.
