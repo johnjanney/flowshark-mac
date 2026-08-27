@@ -124,6 +124,84 @@ async function main() {
     if (!text.includes('Reviewed')) throw new Error('redo did not restore the text');
   });
 
+  await step('drags a shape, and undo puts it back', async () => {
+    const before = await page.$eval('#canvas-root g[data-kind="shape"]:last-of-type', (node) => {
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    });
+    const from = { x: before.x + before.width / 2, y: before.y + before.height / 2 };
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 140, from.y - 60, { steps: 14 });
+    await page.mouse.up();
+    await page.waitForTimeout(220);
+
+    const after = await page.$eval('#canvas-root g[data-kind="shape"]:last-of-type', (node) => {
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x, y: rect.y };
+    });
+    if (Math.abs(after.x - before.x) < 80) {
+      throw new Error(`the drag moved the shape by ${Math.round(after.x - before.x)} px`);
+    }
+
+    await page.keyboard.press('Meta+z');
+    await page.waitForTimeout(200);
+    const undone = await page.$eval('#canvas-root g[data-kind="shape"]:last-of-type', (node) =>
+      node.getBoundingClientRect().x,
+    );
+    if (Math.abs(undone - before.x) > 2) {
+      throw new Error(`undo left the shape ${Math.round(undone - before.x)} px away`);
+    }
+  });
+
+  await step('resizes a shape with a handle', async () => {
+    const box = await page.$eval('#canvas-root g[data-kind="shape"]:last-of-type', (node) => {
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    });
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForTimeout(150);
+
+    const handle = await page.$eval('#overlay [data-handle="se"]', (node) => {
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    });
+    await page.mouse.move(handle.x, handle.y);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + 90, handle.y + 50, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(220);
+
+    const resized = await page.$eval('#canvas-root g[data-kind="shape"]:last-of-type', (node) =>
+      node.getBoundingClientRect().width,
+    );
+    if (resized <= box.width + 20) {
+      throw new Error(`the shape went from ${Math.round(box.width)} to ${Math.round(resized)} px`);
+    }
+    await page.keyboard.press('Meta+z');
+    await page.waitForTimeout(180);
+  });
+
+  await step('selects with a marquee', async () => {
+    await page.keyboard.press('Escape');
+    const bounds = await page.$eval('#canvas-root', (node) => {
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    });
+    await page.mouse.move(bounds.x - 40, bounds.y - 40);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width + 40, bounds.y + bounds.height + 40, {
+      steps: 12,
+    });
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+    const status = await page.$eval('#statusbar', (node) => node.textContent ?? '');
+    if (!/elements selected/.test(status)) {
+      throw new Error(`the marquee selected nothing: ${status}`);
+    }
+    await page.keyboard.press('Escape');
+  });
+
   await step('draws a connector between two shapes', async () => {
     const before = await page.$$eval('#canvas-root g[data-kind="connector"]', (n) => n.length);
     const points = await page.$$eval('#canvas-root g[data-kind="shape"] path.fs-shape-path', (nodes) =>

@@ -98,6 +98,7 @@ export class CanvasRenderer {
   overlayState: OverlayState = emptyOverlayState();
 
   private gridRect: SVGRectElement;
+  private gridDefs: SVGDefsElement;
   private nodeIndex = new Map<ElementId, SVGGElement>();
   private theme: SceneTheme = themeFromCss();
 
@@ -105,6 +106,11 @@ export class CanvasRenderer {
     private readonly store: Store,
     private readonly dom: RendererElements,
   ) {
+    // A separate defs node: the grid pattern is rewritten on every pan and
+    // zoom, and it must not take the scene's gradients and markers with it.
+    this.gridDefs = svg('defs', { id: 'fs-grid-defs' });
+    this.dom.canvas.insertBefore(this.gridDefs, this.dom.defs);
+
     this.gridRect = svg('rect', {
       class: 'fs-grid-background',
       x: 0,
@@ -182,7 +188,8 @@ export class CanvasRenderer {
       interactive: true,
       accessible: false,
     });
-    this.dom.defs.innerHTML = this.gridPatternMarkup() + scene.defs;
+    this.dom.defs.innerHTML = scene.defs;
+    this.installGridPattern();
     this.dom.root.innerHTML = scene.body;
 
     this.nodeIndex.clear();
@@ -204,7 +211,7 @@ export class CanvasRenderer {
       'transform',
       `translate(${round(-offset.x * zoom, 3)} ${round(-offset.y * zoom, 3)}) scale(${round(zoom, 6)})`,
     );
-    this.updateGridPattern();
+    this.installGridPattern();
   }
 
   // -------------------------------------------------------------------------
@@ -235,15 +242,9 @@ export class CanvasRenderer {
   }
 
   private installGridPattern(): void {
-    const existing = this.dom.defs.innerHTML.replace(
-      /<pattern id="fs-grid-(minor|pattern)".*?<\/pattern>/gs,
-      '',
-    );
-    this.dom.defs.innerHTML = this.gridPatternMarkup() + existing;
-  }
-
-  private updateGridPattern(): void {
-    this.installGridPattern();
+    const markup = this.gridPatternMarkup();
+    if (this.gridDefs.innerHTML === markup) return;
+    this.gridDefs.innerHTML = markup;
   }
 
   // -------------------------------------------------------------------------

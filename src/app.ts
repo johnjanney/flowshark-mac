@@ -137,6 +137,7 @@ export class FlowSharkApp {
   private autosaveTimer: number | null = null;
   private lastKnownFileTime: number | null = null;
   private overlayFrame = 0;
+  private menuSyncTimer: number | null = null;
 
   constructor() {
     this.surface = requireElement<HTMLElement>('canvas-scroll');
@@ -255,6 +256,13 @@ export class FlowSharkApp {
   // -------------------------------------------------------------------------
 
   private onStateChange(changed: ReadonlySet<string>): void {
+    // A status message changes on every pointer move during a drag. Nothing
+    // else may rebuild for it.
+    if (changed.size === 1 && changed.has('status')) {
+      this.statusBar.sync();
+      return;
+    }
+
     if (changed.has('document')) {
       this.renderer.renderScene();
       this.editor.reposition();
@@ -284,7 +292,19 @@ export class FlowSharkApp {
     this.scheduleOverlay();
     this.toolbar.sync();
     this.statusBar.sync();
-    void this.nativeMenu.sync();
+    this.scheduleMenuSync();
+  }
+
+  /**
+   * Pushing enabled and checked state into the native menu crosses the
+   * process boundary, so it is coalesced rather than run on every change.
+   */
+  private scheduleMenuSync(): void {
+    if (this.menuSyncTimer !== null) return;
+    this.menuSyncTimer = window.setTimeout(() => {
+      this.menuSyncTimer = null;
+      void this.nativeMenu.sync();
+    }, 120);
   }
 
   private refreshAll(): void {
@@ -297,7 +317,7 @@ export class FlowSharkApp {
     this.statusBar.sync();
     this.scheduleOverlay();
     void this.updateWindowTitle();
-    void this.nativeMenu.sync();
+    this.scheduleMenuSync();
   }
 
   private scheduleOverlay(): void {
@@ -1100,7 +1120,8 @@ export class FlowSharkApp {
       {
         id: 'edit.emoji',
         title: 'Emoji and Symbols',
-        accelerator: 'Ctrl+Cmd+Space',
+        // Deliberately no accelerator: ⌃⌘Space belongs to macOS, and claiming
+        // it here would stop the system picker from opening.
         run: () =>
           showToast('Press Control-Command-Space while editing text to open the picker.'),
       },

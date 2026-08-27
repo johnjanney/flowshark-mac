@@ -675,7 +675,7 @@ accessible label.
 | Keyboard Shortcuts | `⌘/` |
 | Hide FlowShark | `⌘H` |
 | Quit | `⌘Q` |
-| Emoji and Symbols | `⌃⌘Space` |
+| Emoji and Symbols | `⌃⌘Space` (handled by macOS) |
 
 ### On the canvas
 

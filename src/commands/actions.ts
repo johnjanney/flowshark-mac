@@ -309,14 +309,16 @@ export function applyAutoSize(store: Store, id: ElementId): void {
   const extra = element.frame.height - local.height;
   const height = Math.max(element.frame.height, Math.ceil(needed + extra));
   if (height === element.frame.height) return;
+  // Share the text edit's coalesce key so typing produces one undo step, not
+  // two.
   store.mutate(
-    'Auto-size',
+    'Edit Text',
     () => {
       const target = store.document.elements[id];
       if (isShape(target)) target.frame = { ...target.frame, height };
       refreshConnectorPoints(store.document);
     },
-    { scope: scopeFor(store, [id]) },
+    { scope: scopeFor(store, [id]), coalesceKey: `text:${id}` },
   );
 }
 

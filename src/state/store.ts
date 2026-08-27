@@ -22,7 +22,12 @@ export type StateSlice =
   | 'ui'
   | 'history'
   | 'file'
-  | 'preferences';
+  | 'preferences'
+  /**
+   * The status-bar message only. It has its own slice because it changes on
+   * every pointer move during a drag, and the panels must not rebuild for it.
+   */
+  | 'status';
 
 export interface ViewState {
   zoom: number;
@@ -368,7 +373,7 @@ export class Store {
   setStatusMessage(message: string): void {
     if (this.state.ui.statusMessage === message) return;
     this.state.ui.statusMessage = message;
-    this.markChanged('ui');
+    this.markChanged('status');
   }
 
   noteShapeUse(shapeKey: string): void {

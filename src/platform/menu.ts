@@ -71,25 +71,45 @@ export class NativeMenu {
           const command = this.registry.get(entry.command);
           if (!command) continue;
 
+          // An accelerator the system cannot parse must cost that one
+          // shortcut, not the whole menu bar: retry without it.
+          const create = async <T>(
+            make: (accelerator: string | undefined) => Promise<T>,
+          ): Promise<T> => {
+            try {
+              return await make(command.accelerator);
+            } catch (error) {
+              console.warn(
+                `The shortcut "${command.accelerator}" for "${command.title}" was rejected.`,
+                error,
+              );
+              return make(undefined);
+            }
+          };
+
           if (command.isChecked) {
-            const item = await CheckMenuItem.new({
-              id: command.id,
-              text: command.title,
-              accelerator: command.accelerator,
-              checked: command.isChecked(),
-              enabled: this.registry.isEnabled(command.id),
-              action: () => this.registry.run(command.id),
-            });
+            const item = await create((accelerator) =>
+              CheckMenuItem.new({
+                id: command.id,
+                text: command.title,
+                accelerator,
+                checked: command.isChecked!(),
+                enabled: this.registry.isEnabled(command.id),
+                action: () => this.registry.run(command.id),
+              }),
+            );
             this.checkItemsByCommand.set(command.id, item as unknown as CheckItemHandle);
             built.push(item);
           } else {
-            const item = await MenuItem.new({
-              id: command.id,
-              text: command.title,
-              accelerator: command.accelerator,
-              enabled: this.registry.isEnabled(command.id),
-              action: () => this.registry.run(command.id),
-            });
+            const item = await create((accelerator) =>
+              MenuItem.new({
+                id: command.id,
+                text: command.title,
+                accelerator,
+                enabled: this.registry.isEnabled(command.id),
+                action: () => this.registry.run(command.id),
+              }),
+            );
             this.itemsByCommand.set(command.id, item as unknown as MenuItemHandle);
             built.push(item);
           }
