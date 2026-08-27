@@ -161,6 +161,7 @@ export class Inspector {
     if (shapes.length > 0 || connectors.length > 0) {
       this.body.append(this.textSection(shapes, connectors));
       this.body.append(this.presetSection());
+      this.body.append(this.accessibilitySection());
     }
     this.sync();
   }
@@ -750,6 +751,53 @@ export class Inspector {
     const reset = el('button', { class: 'button', type: 'button' }, ['Reset to default style']);
     reset.addEventListener('click', () => this.registry.run('format.resetStyle'));
     return this.section('Style Presets', [row, reset]);
+  }
+
+  /**
+   * Alt text.
+   *
+   * VoiceOver falls back to the shape's name and its text, which is right most
+   * of the time; this is for the cases where it is not — an icon standing in
+   * for something, or a label that reads badly out of context. It is also what
+   * an exported SVG carries as its accessible label.
+   */
+  private accessibilitySection(): HTMLElement {
+    const field = el('textarea', {
+      rows: 2,
+      placeholder: 'Described automatically',
+      'aria-label': 'Description for VoiceOver',
+    });
+    field.addEventListener('change', () => {
+      const ids = [...this.store.selection];
+      this.store.mutate(
+        'Change Description',
+        () => {
+          for (const id of ids) {
+            const element = this.store.document.elements[id];
+            if (element && 'altText' in element) element.altText = field.value;
+          }
+        },
+        { scope: ids },
+      );
+    });
+    this.updaters.push(() => {
+      if (document.activeElement === field) return;
+      const id = this.store.selection[0];
+      const element = id ? this.store.document.elements[id] : undefined;
+      const value = element && 'altText' in element ? element.altText : '';
+      if (field.value !== value) field.value = value;
+    });
+
+    return this.section(
+      'Description',
+      [
+        el('div', { class: 'row-wide' }, [
+          el('div', { class: 'field-label' }, ['Read by VoiceOver and written into exported SVG.']),
+          field,
+        ]),
+      ],
+      false,
+    );
   }
 
   private arrangeSection(): HTMLElement {

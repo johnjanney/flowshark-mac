@@ -1,0 +1,665 @@
+# Decisions
+
+The choices made while building FlowShark, why they were made, and what would
+change them. Decisions are numbered so other documents and code comments can
+point at them; numbers are never reused.
+
+Each entry records the **context**, the **decision**, the **consequences** —
+including the ones that cost something — and **what would reverse it**.
+
+**Contents**
+
+- [Platform and distribution](#platform-and-distribution)
+  — [D-001](#d-001-apple-silicon-only) · [D-002](#d-002-keep-tauri-v2)
+  · [D-003](#d-003-bundle-identifier-and-document-type)
+  · [D-004](#d-004-developer-id-and-a-dmg-with-no-app-sandbox)
+- [Rendering and architecture](#rendering-and-architecture)
+  — [D-005](#d-005-render-with-svg-not-a-2d-canvas)
+  · [D-006](#d-006-one-scene-builder-for-the-screen-and-every-export)
+  · [D-017](#d-017-no-ui-framework)
+  · [D-022](#d-022-keep-the-browser-build-working)
+- [The document model](#the-document-model)
+  — [D-014](#d-014-undo-by-diffing-snapshots)
+  · [D-015](#d-015-z-order-is-a-position-not-a-field)
+  · [D-023](#d-023-store-colours-as-srgb-hex)
+  · [D-024](#d-024-two-kinds-of-automatic-saving)
+- [Text](#text)
+  — [D-007](#d-007-plain-text-styled-per-element)
+  · [D-008](#d-008-in-app-font-and-colour-controls)
+- [Connectors](#connectors)
+  — [D-019](#d-019-floating-anchors-pick-a-declared-connection-point)
+  · [D-020](#d-020-simple-orthogonal-routing-first)
+- [Export](#export)
+  — [D-016](#d-016-write-pdf-directly-with-a-raster-fallback)
+- [Scope deliberately left out](#scope-deliberately-left-out)
+  — [D-009](#d-009-defer-the-macos-integrations-that-need-objective-c)
+  · [D-010](#d-010-no-svg-import-yet)
+  · [D-012](#d-012-layers-in-the-model-no-layers-panel)
+  · [D-013](#d-013-no-updater-yet)
+- [Other](#other)
+  — [D-011](#d-011-a-colour-blind-safe-default-palette)
+  · [D-018](#d-018-keep-the-name-flowshark)
+  · [D-021](#d-021-generate-the-icons-from-a-script)
+- [Milestone 0 gates](#milestone-0-gates)
+- [Still open](#still-open)
+
+---
+
+## Platform and distribution
+
+### D-001: Apple Silicon only
+
+**Context.** macOS 26 Tahoe is the last release that supports Intel Macs;
+macOS 27 is Apple Silicon only. A universal binary roughly doubles Rust build
+time and doubles the test matrix, and the value of that work falls every month.
+
+**Decision.** Build for `aarch64-apple-darwin` only. `minimumSystemVersion` is
+`14.0` — the version the app is actually tested against — not Tauri's default
+of `10.13`, which would let the app start on systems nobody has tried.
+
+**Consequences.** Intel Macs cannot run FlowShark. Builds and CI runs are
+faster and there is one architecture to reason about.
+
+**What would reverse it.** A concrete user on an Intel Mac who needs the app
+before that hardware is retired. The change is small:
+`npm run tauri:build:universal` already exists, and CI would need
+`x86_64-apple-darwin` added to the toolchain step.
+
+### D-002: Keep Tauri v2
+
+**Context.** The brief (§9.1) selects Tauri v2 and asks that the decision be
+revisited against four conditions in §9.4. Nothing in this codebase was tied to
+Windows.
+
+**Decision.** Keep Tauri v2, retargeted to macOS. Windows targets, `Ctrl`
+shortcuts, and the ribbon layout are gone.
+
+**Consequences.** The costs the brief lists are real and are addressed
+individually: Liquid Glass materials (see below), the AppKit Font and Colors
+panels (D-008), VoiceOver on the canvas (D-005), and app extensions (D-009).
+The bundle is larger than a Swift application's and smaller than an Electron
+one's.
+
+On the **native look**: the brief is explicit that a poor imitation of macOS 26
+Liquid Glass would look worse than a clean design of its own. FlowShark takes
+that advice. The interface is flat and opaque, sits comfortably next to system
+windows, and does not pretend to be made of glass. It uses the real menu bar,
+the real Open and Save panels, the real Print panel, and the system font, which
+is where "feels like a Mac app" actually comes from.
+
+**What would reverse it.** Any of the four conditions in §9.4 — the canvas
+failing the performance targets on Apple Silicon with the WebView shown to be
+the cause; App Review rejecting the WebView entitlements; VoiceOver failing an
+accessibility review; or an iPad version entering the roadmap. See
+[Milestone 0 gates](#milestone-0-gates).
+
+### D-003: Bundle identifier and document type
+
+**Context.** The brief uses `com.example.flowshark` as a placeholder and asks
+for the real reverse-domain identifier before Milestone 0 ends.
+
+**Decision.** Use `com.flowshark.app` for the bundle and
+`com.flowshark.document` for the exported UTI. The document type conforms to
+`public.data`, `public.content`, and `public.json`, and claims the `flowshark`
+extension and the `application/vnd.flowshark+json` MIME type.
+
+**Consequences.** These strings appear in `src-tauri/tauri.conf.json`,
+`src-tauri/Info.plist`, and `src-tauri/Entitlements.plist`.
+
+**Open point.** `com.flowshark.app` assumes the project controls
+`flowshark.com`. **Confirm this before the first public release.** Changing the
+identifier afterwards means macOS treats the app as a different application:
+preferences are lost, and the Finder's document type registration has to be
+rebuilt. Changing the *UTI* afterwards additionally orphans the file
+association on machines that already saw the old one.
+
+### D-004: Developer ID and a DMG, with no App Sandbox
+
+**Context.** The brief leaves the distribution channel open. Developer ID plus
+a DMG makes the sandbox optional; the Mac App Store makes it mandatory, and
+the brief notes that Apple's position on WebView entitlements for App Store
+submissions is unverified.
+
+**Decision.** Ship with a Developer ID certificate in a DMG. Turn on the
+Hardened Runtime. Do not enable the App Sandbox. Request exactly one
+entitlement, `com.apple.security.cs.allow-jit`, which WKWebView's JavaScript
+engine needs.
+
+**Consequences.** Open and Save work without security-scoped bookmarks, so
+Open Recent survives a restart with no extra machinery. The entitlement list is
+as short as it can be. FlowShark is not on the Mac App Store.
+
+**What would reverse it.** A decision to submit to the App Store. That means
+adding `com.apple.security.app-sandbox` and
+`com.apple.security.files.user-selected.read-write`, adding security-scoped
+bookmarks to the recent-files list, and testing the JIT entitlement against App
+Review early, because that combination is unverified. `Entitlements.plist`
+carries a comment saying exactly this.
+
+---
+
+## Rendering and architecture
+
+### D-005: Render with SVG, not a 2D canvas
+
+**Context.** The brief names the canvas as the main accessibility risk: a
+`<canvas>` element has no structure a screen reader can read, and the team
+would have to build an ARIA tree or a parallel object list by hand (§8.14,
+§15).
+
+**Decision.** Draw the diagram as SVG in the DOM rather than into a 2D canvas.
+
+**Consequences.**
+
+- *Accessibility.* Every element is a real node that can carry a role, a
+  label, and a `<title>`. FlowShark still maintains a separate outline for
+  navigation (see the Milestone 0 gates below), but the drawing itself is not
+  an opaque rectangle.
+- *Hit testing.* The browser does it, exactly, against the real shape outline.
+  A click inside the notch of a hexagon misses the hexagon, which is correct
+  and would have been a page of code otherwise.
+- *Retina and ProMotion.* Vector rendering is resolution-independent, so 2x
+  displays are free and there is no bitmap to re-rasterise on a zoom.
+- *SVG export.* Effectively free, and guaranteed to match the screen.
+- *Cost: performance.* A DOM node per element is heavier than a draw call.
+  Measured in Chromium, building and inserting a document of 750 elements
+  takes about 55 ms, and 3,000 elements about 180 ms. That happens once per
+  committed edit, not once per frame: pan and zoom are a single transform, and
+  a drag moves the affected nodes and re-routes only the connectors that
+  touch them.
+
+**What would reverse it.** Editing feeling sluggish on Apple Silicon at the
+recommended 2,000-object target. The first fix is not a rewrite: it is
+incremental per-element DOM patching instead of rebuilding the scene, which
+would confine the cost to the elements that actually changed.
+
+### D-006: One scene builder for the screen and every export
+
+**Context.** The brief calls out export fidelity as a risk: SVG and PDF must
+match what is on screen (§15).
+
+**Decision.** `src/canvas/scene.ts` turns a document into SVG, and it is the
+only place that decides how anything is drawn. The screen renders its output.
+The SVG exporter wraps it. The PNG, JPEG, and WebP exporters rasterise it. The
+PDF exporter draws from the same geometry, routing, and text-layout functions
+and reuses the same path data.
+
+**Consequences.** An export cannot drift away from the screen, because there is
+no second drawing path to drift. Adding a shape means writing its geometry
+once. The cost is that the screen renderer builds strings rather than mutating
+nodes, which is what makes D-005's numbers what they are.
+
+**What would reverse it.** Nothing foreseeable. If the screen renderer ever
+needs incremental patching, it would patch the output of this same builder
+element by element rather than growing its own drawing code.
+
+### D-017: No UI framework
+
+**Context.** The interface is a toolbar, two panels, a few sheets, and a
+canvas. The canvas — the part that has to be fast — is not built from
+components at all.
+
+**Decision.** Build the interface with plain DOM calls and a small `el()` /
+`svg()` helper. No React, no Vue, no Svelte.
+
+**Consequences.** The production bundle is about 67 kB gzipped, all of it
+FlowShark's own code, which is straightforward to audit before signing.
+There is no framework version to keep up with. The cost is that panels are
+re-rendered by hand: the inspector rebuilds only when the *kind* of selection
+changes and otherwise refreshes values in place through registered updaters,
+so a field keeps focus and its insertion point while you type in it.
+
+**What would reverse it.** The interface growing enough that manual updates
+start producing bugs. The store already emits which slices changed, so a
+framework could be adopted panel by panel.
+
+### D-022: Keep the browser build working
+
+**Context.** Tauri applications are usually developed with the native shell
+running. That makes automated testing awkward and slows the edit-and-look
+cycle.
+
+**Decision.** Every platform capability goes through `src/platform/`, which has
+a working browser implementation as well as a macOS one. In a browser,
+FlowShark uses a file input in place of the Open panel, a download in place of
+Save, and an in-app menu bar in place of the system one.
+
+**Consequences.** `npm run smoke` can drive the whole application in headless
+Chromium — adding shapes, editing text, connecting, undoing, exporting — and
+CI catches interface regressions without a Mac in the loop. The browser path is
+a genuine second implementation, so it has to be kept working.
+
+**What would reverse it.** Nothing. The cost is small and the testing benefit
+is large. It is also the boundary a Swift rewrite would cut along.
+
+---
+
+## The document model
+
+### D-014: Undo by diffing snapshots
+
+**Context.** The brief requires undo across every common edit and at least 100
+steps (§8.15). The usual approach — each command supplying its own inverse — is
+where undo bugs come from: a new command forgets one, and undo silently
+corrupts the document.
+
+**Decision.** Every edit runs in a transaction. The transaction deep-copies the
+parts of the document the action is allowed to touch, lets the action mutate
+the document freely, then diffs the two states and stores the difference as a
+pair of patches. Undo applies one, redo applies the other. Commands that touch
+a few elements declare a `scope`, which limits both the copy and the diff.
+
+**Consequences.** A new command cannot break undo by omission — that is the
+whole point. Selection is part of the entry, so undo restores what was
+selected. Rapid nudges and slider drags merge into one step through a coalesce
+key. The cost is a copy-and-compare per edit, which is imperceptible for a
+scoped edit and a few milliseconds for a document-wide one.
+
+**What would reverse it.** A document-wide operation on a very large diagram
+feeling slow. The fix is to give it a scope, not to change the mechanism.
+
+### D-015: Z-order is a position, not a field
+
+**Context.** The brief lists a `zIndex` field on shapes and connectors (§8.16).
+
+**Decision.** Keep a single `order` array on the document, bottom-most first.
+Position in that array *is* the z-index. Elements do not carry a separate
+number.
+
+**Consequences.** Two elements cannot claim the same z-index, and reordering
+cannot leave a stale field behind — a class of bug that simply does not exist.
+Bring Forward and Send Backward are array operations. The saved file is
+slightly smaller. The one cost is that "what is the z-index of this element"
+is an array lookup rather than a field read, which no code path needs to do
+often.
+
+**What would reverse it.** Nothing. If an external format needs explicit
+indices, they are derived at export time.
+
+### D-023: Store colours as sRGB hex
+
+**Context.** The brief asks for colours in a colour space that gives the same
+result on wide-gamut displays (§8.5).
+
+**Decision.** Store colours as `#rrggbb` sRGB, with opacity as a separate
+0–1 number rather than an alpha channel. Exported SVG declares
+`color-interpolation="sRGB"`; exported PDF uses DeviceRGB.
+
+**Consequences.** A colour looks the same on a P3 display as on an sRGB one,
+and the same in the app as in an export. Keeping opacity separate means a
+colour can be reused at a different opacity without editing the value. Colours
+outside sRGB cannot be expressed.
+
+**What would reverse it.** A user need for Display P3 colours. The stored form
+would become a tagged value, which is a document schema change (see
+[VERSIONING.md](VERSIONING.md#4-document-schema-versions)).
+
+### D-024: Two kinds of automatic saving
+
+**Context.** The brief recommends both automatic saving and crash recovery
+(§8.10) but they are not the same thing.
+
+**Decision.** A document that has a file writes back to that file on the
+automatic-save interval. A document that has never been saved keeps a private
+recovery snapshot instead, which the next launch offers to restore. Successfully
+saving clears the snapshot.
+
+**Consequences.** Work is never silently written to a file the user did not
+choose, and unsaved work still survives a crash. The cost is that recovery for
+an untitled document depends on browser-local storage inside the app's
+container, which is cleared if the user removes the app's support data.
+
+**What would reverse it.** Adopting `NSDocument`-style autosave-in-place and
+Versions, which is a much larger piece of work and would probably arrive with a
+Swift rewrite.
+
+---
+
+## Text
+
+### D-007: Plain text, styled per element
+
+**Context.** The brief warns that inline rich text in arbitrary shapes creates
+unexpected problems and advises starting with plain text and basic formats
+(§15).
+
+**Decision.** A shape holds a plain string plus one text style. Bold, italic,
+underline, font, size, colour, and alignment apply to the whole label. No
+bullet or numbered lists.
+
+Editing happens in a real `<textarea>` positioned over the shape rather than in
+a custom text engine. That is what buys the whole macOS text stack for free:
+input methods for Chinese, Japanese, and Korean; press-and-hold accents and
+dead keys; the Emoji and Symbols picker; system spelling and grammar checking;
+text substitutions; and the standard editing key bindings.
+
+**Consequences.** Labels are simple to lay out, to measure, to export, and to
+serialise. The line-breaking code is small enough to test properly. You cannot
+put one word of a label in bold.
+
+**What would reverse it.** Users asking for mixed formatting inside one label.
+That means a run-based text model, a caret and selection model on top of it,
+and matching work in all three exporters — a substantial piece of work, and the
+reason it is not in 0.1.0.
+
+### D-008: In-app font and colour controls
+
+**Context.** The AppKit Font panel and Colors panel are native components. A
+WebView cannot open them, and the brief asks for either in-app equivalents or a
+plugin, with the decision recorded (§8.4).
+
+**Decision.** Build in-app controls: a font list of ten families that ship with
+macOS, a numeric size field, weight and style controls, the system colour input
+(`<input type="color">`, which on macOS opens the real system colour picker),
+and a palette of colours chosen to work in both appearances.
+
+**Consequences.** No plugin, no extra Rust surface, and the controls sit in the
+inspector next to everything else rather than in a floating panel. The cost is
+that the font list is fixed rather than enumerating every installed font, and
+there is no Typography sheet for ligatures or small caps.
+
+**What would reverse it.** Users needing a font that is not on the list. The
+next step would be a Tauri command that enumerates installed families, which is
+much less work than bridging the whole Font panel.
+
+---
+
+## Connectors
+
+### D-019: Floating anchors pick a declared connection point
+
+**Context.** The brief asks for a floating connector that "attaches to the
+nearest logical point" (§8.3). The obvious reading — intersect a line from
+centre to centre with the shape outline — gives connectors that land at
+arbitrary angles on a diamond or a cylinder and look untidy.
+
+**Decision.** A floating anchor chooses, from the shape's own declared
+connection points, the one closest to the other end of the connector, and
+re-chooses whenever either shape moves.
+
+**Consequences.** Routes stay tidy and orthogonal without an obstacle-avoidance
+pass. The choice is deterministic, so a document looks identical every time it
+is opened. The cost is that a connector cannot meet a shape at an arbitrary
+point unless the user drags its end there, which pins it as a ratio anchor.
+
+**What would reverse it.** A shape with too few connection points for a dense
+diagram. The fix is to give that shape more points in the library, not to
+change the rule.
+
+### D-020: Simple orthogonal routing first
+
+**Context.** The brief is explicit: dynamic routes get complex, so build a
+simple and reliable version first and add automatic routing later (§15).
+
+**Decision.** Elbow and step connectors leave each end along a short stub in
+the direction of its edge, then join with a shared middle line. When both stubs
+face the same way, the middle line goes past the further one instead of
+splitting the difference, which is what stops routes doubling back.
+Obstacle avoidance is opt-in per connector and only shifts that middle line to
+a clear position.
+
+**Consequences.** Routing is a few dozen lines, it is fast, and it is
+predictable — the same inputs always give the same route. It will not find a
+clever path through a crowded diagram; for that, users place bend points, and
+placing one switches the connector to keeping the user's route.
+
+**What would reverse it.** Diagrams dense enough that manual bend points become
+tedious. That means a real routing pass — an A\* search over a visibility grid —
+which is a self-contained addition behind the same interface.
+
+---
+
+## Export
+
+### D-016: Write PDF directly, with a raster fallback
+
+**Context.** The brief requires PDF export and warns that exports must match
+the screen (§8.11, §15). The options were a third-party library, rasterising
+into a PDF wrapper, or writing the PDF directly.
+
+**Decision.** Write the PDF directly. `src/io/pdf-writer.ts` is a focused PDF
+1.7 writer — objects, streams, a cross-reference table — and
+`src/io/export-pdf.ts` turns the document into drawing operators using the same
+geometry, routing, and text-layout functions the screen uses. Text uses the PDF
+base-14 fonts with WinAnsi encoding, so it stays selectable and searchable.
+Gradients become real axial shadings.
+
+When vector output cannot be faithful — text outside the Western European
+character set, or an embedded picture — FlowShark rasterises the diagram and
+embeds it instead, and tells the user it has done so.
+
+**Consequences.** No third-party code inside a signed bundle, and no
+dependency to keep current. PDFs are small: a full template exports in about
+6 kB. Text is real text. The costs are honest ones:
+
+- *Font metrics.* Line positions are measured with the system font and drawn
+  with Helvetica, Times, or Courier. Centred text can sit a point or two off
+  where the screen put it. Left-aligned text is unaffected.
+- *Shadows* are not reproduced in vector output.
+- *The raster fallback* embeds a JPEG, so its text is not selectable.
+
+**What would reverse it.** Users needing exact typography in PDF. That means
+embedding a subset of the actual font, which needs a TrueType parser and a
+subsetting pass — a well-understood but substantial addition to the same
+writer.
+
+---
+
+## Scope deliberately left out
+
+### D-009: Defer the macOS integrations that need Objective-C
+
+**Context.** Several items in the brief need AppKit calls that Tauri does not
+expose: writing `com.adobe.pdf` and `public.svg-image` to `NSPasteboard`
+(§8.11), the system share sheet through `NSSharingServicePicker` (§8.11), a
+drag session that hands a file promise to the Finder (§8.11), and Quick Look
+preview and thumbnail extensions plus a Spotlight importer, which need
+separate Xcode targets inside the bundle (§8.17). The brief itself flags the
+last group as manual work and suggests treating it as post-MVP.
+
+**Decision.** Ship 0.1.0 without them, and use only APIs that could be built
+and verified. What is implemented instead:
+
+| Wanted | In 0.1.0 |
+|---|---|
+| Multi-type pasteboard | `public.png` and `public.utf8-plain-text`, through the Tauri clipboard plugin — both real macOS pasteboard types that Keynote, Pages, and Mail read |
+| Share sheet | **File > Copy as Image**, and the exported file is revealed in the Finder |
+| Drag out to the Finder | Export, which reveals the file ready to drag |
+| Print, with Save as PDF | Implemented — the standard macOS Print panel |
+| Quick Look, Spotlight | Not present |
+
+**Why, specifically.** These need a Rust module using `objc2` to call AppKit.
+That code compiles only on macOS, and this project was developed on Linux,
+where `cargo check` skips macOS-only dependencies entirely. Writing an
+Objective-C bridge that could not be compiled even once would mean shipping a
+repository whose first `npm run tauri:build` on a Mac fails — a worse outcome
+than a documented gap. Everything that *is* here compiles, and CI compiles it
+on a macOS runner on every push.
+
+**What would reverse it.** A macOS build host, which CI already provides. The
+work is well-defined: one Rust module with `NSPasteboard` writes for the extra
+types and an `NSSharingServicePicker` presentation, plus an
+`NSFilePromiseProvider` for drag-out. Quick Look and Spotlight are a separate,
+larger job because Tauri does not create Xcode app-extension targets.
+
+### D-010: No SVG import yet
+
+**Context.** SVG import is listed as recommended (§8.11), and the security
+requirements are specific: sanitise imports, strip `<script>` elements, event
+attributes, and external references (§13).
+
+**Decision.** Do not import SVG in 0.1.0. Bitmap import — PNG, JPEG, WebP, GIF
+— is implemented, by dropping, pasting, or choosing a file, with images
+embedded so a document stays self-contained.
+
+**Reasoning.** Importing SVG safely is not a parsing job, it is a sanitising
+job: element and attribute allow-lists, `href` scheme checks, `use` reference
+resolution, entity-expansion limits, and a decision about what to do with
+features FlowShark cannot represent. Half of that is worse than none of it,
+because a half-sanitised import is a security hole in an application that
+otherwise never executes anything from a document.
+
+**What would reverse it.** Users needing to bring artwork in from Illustrator
+or Figma. The work is a sanitising parser producing FlowShark shapes, with
+tests built from a corpus of hostile SVG.
+
+### D-012: Layers in the model, no layers panel
+
+**Context.** The brief requires the four ordering commands and lists a layers
+panel as recommended (§8.7).
+
+**Decision.** The document model has layers — identity, name, visibility, lock
+— and documents round-trip them. Every new element goes on the default layer,
+and there is no panel to manage them. The ordering commands, plus per-element
+lock and hide, are fully implemented.
+
+**Consequences.** No feature had to be designed around a missing model, and a
+future panel needs no format change. Users who expect a layers list will not
+find one.
+
+**What would reverse it.** Diagrams complex enough that per-element lock and
+hide stop being enough.
+
+### D-013: No updater yet
+
+**Context.** The brief asks for Sparkle or the Tauri updater for builds
+distributed outside the App Store (§8.17).
+
+**Decision.** No updater in 0.1.0. Updating means downloading a newer DMG, and
+[INSTALLATION.md](INSTALLATION.md#updating) says so.
+
+**Reasoning.** An updater needs a signing key pair, a hosted update manifest,
+and a place to serve builds from — infrastructure decisions that have not been
+made. Shipping a half-configured updater risks the worst failure mode an
+updater has: replacing a working application with something that will not
+launch.
+
+**What would reverse it.** The first release that people other than the team
+install. `tauri-plugin-updater` is then the least work: add the plugin,
+generate a key pair, publish `latest.json` alongside each release, and keep the
+private key in the same secret store as the signing certificate.
+
+---
+
+## Other
+
+### D-011: A colour-blind-safe default palette
+
+**Context.** The brief recommends colour-blind-safe default palettes and
+requires WCAG 2.1 AA contrast for interface controls (§8.14).
+
+**Decision.** The six presets — Blue, Slate, Green, Amber, Rose, Outline — pair
+a light fill with a much darker border and dark text rather than relying on hue
+alone. The templates use them for meaning: green for start states, amber for
+exception paths, rose for terminal states.
+
+**Consequences.** A diagram stays readable in greyscale, printed, and under
+deuteranopia and protanopia, because the fills differ in lightness as well as
+hue. Nothing stops a user choosing an unreadable colour of their own; the
+palette in the inspector is the safe path, not a fence.
+
+**What would reverse it.** Nothing. If a diagram accessibility checker is added
+later, this palette is what it would check against.
+
+### D-018: Keep the name FlowShark
+
+**Context.** The brief uses "FlowShark", derived from the `.flowshark`
+extension, and asks for confirmation before shipping (§0.3).
+
+**Decision.** Keep it. It is short, it is easy to say, and it is already the
+file extension, the UTI, and the bundle identifier.
+
+**Open point.** A trademark search has not been done. Do that before the first
+public release — changing the name later means changing the bundle identifier
+too, with the consequences described in D-003.
+
+### D-021: Generate the icons from a script
+
+**Context.** The bundle needs PNGs at four sizes, an application `.icns` with
+eight variants, and a document `.icns` for the `.flowshark` type.
+
+**Decision.** `scripts/generate-icons.py` draws them and writes the PNG and
+ICNS containers itself, with no image library. The icons are checked in so a
+build does not depend on Python, and regenerating them is one command.
+
+**Consequences.** The icon is reviewable as source, a change is a diff rather
+than a binary blob, and every size is rendered from the same master rather than
+scaled from a small original. The cost is a few hundred lines of drawing code
+that a designer cannot open in a graphics application.
+
+**What would reverse it.** A designer joining the project. Replace the script's
+output with exported PNGs; nothing else changes.
+
+---
+
+## Milestone 0 gates
+
+The brief sets two gates that must be run before the technology decision is
+final (§14), and asks that the results be recorded.
+
+### Gate 1 — Performance
+
+Measured in headless Chromium, building a document and inserting it into the
+DOM:
+
+| Document | Build | Insert | Save | Open | File size |
+|---|---|---|---|---|---|
+| 750 elements (500 shapes, 250 connectors) | 24 ms | 31 ms | 4 ms | 8 ms | 0.8 MB |
+| 3,000 elements (2,000 shapes, 1,000 connectors) | 65 ms | 115 ms | 14 ms | 17 ms | 3.3 MB |
+
+That is a full rebuild, which happens once per committed edit. Pan and zoom
+are a single transform and cost nothing; a drag transforms the affected nodes
+and re-routes only the connectors attached to them; save and open are
+comfortably within "fast" at both sizes.
+
+**These numbers are not the gate.** They were taken in Chromium on a Linux CI
+machine, not in WKWebView on Apple Silicon, and they measure scene construction
+rather than sustained frame rate. **Gate 1 must be re-run on Apple Silicon
+hardware, on battery as well as mains, before the technology decision is
+closed** (§8.15). What to measure: sustained frames per second while dragging a
+selection in a 2,000-object document at 100% and at 50% zoom; the same on a
+ProMotion display; and idle CPU with a document open and untouched.
+
+The numbers above are good enough to say the approach is not obviously wrong,
+and to identify the first optimisation if it turns out to be: incremental
+per-element DOM patching (D-005).
+
+### Gate 2 — VoiceOver on the canvas
+
+**What was built.** The canvas SVG is hidden from assistive technology, and a
+parallel outline is maintained beside it and kept in step with the document.
+Each entry names an element and the connections leaving it — "Process, Approve
+invoice. Connects Yes to Decision, Over £10,000?; No to Terminator, Pay." —
+which is the structure the brief asks for (§8.14). Tab and Shift-Tab step
+through it, selecting each element and scrolling it into view. Every element
+also carries a role, a label, and a `<title>` for exported SVG, and per-element
+alt text can override the generated description.
+
+**What was verified.** The smoke test confirms the outline exists, has an entry
+per element, and describes connections. Every command is reachable from the
+menu bar, and the shortcut reference is generated from the same registry, so
+the "no mouse-only commands" rule is structural rather than a promise.
+
+**What was not verified.** VoiceOver itself has not been run against this
+build — that needs macOS. **Gate 2 must be completed with real VoiceOver on
+Apple Silicon before the technology decision is closed.** What to check:
+whether the outline is announced usefully in practice or merely present;
+whether rotor navigation lands somewhere sensible; whether selection changes
+are announced at the right moment; and whether the live region used for drag
+feedback is too chatty during a drag.
+
+---
+
+## Still open
+
+Decisions the brief asks to be closed that this repository cannot close on its
+own:
+
+| Question | Status |
+|---|---|
+| Bundle identifier | `com.flowshark.app` chosen; confirm the domain is controlled (D-003) |
+| Product name | Kept; a trademark search is outstanding (D-018) |
+| Gate 1, on Apple Silicon | Must be re-run on real hardware |
+| Gate 2, with VoiceOver | Must be run on real hardware |
+| Signing identity | CI is wired for it; the certificate and secrets are not in place |
+| Distribution channel | Developer ID and DMG (D-004); revisit only if the App Store is wanted |
