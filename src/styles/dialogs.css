@@ -1,0 +1,163 @@
+/* Modal sheets: the template chooser, export options, settings, and alerts. */
+
+.dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 700;
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8vh;
+  background: rgba(10, 14, 22, 0.34);
+}
+
+.dialog-layer.open {
+  display: flex;
+}
+
+.dialog {
+  width: min(760px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+}
+
+.dialog.narrow {
+  width: min(460px, 92vw);
+}
+
+.dialog-header {
+  padding: 16px 20px 8px;
+}
+
+.dialog-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.dialog-header p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.dialog-footer .spacer {
+  flex: 1 1 auto;
+}
+
+/* Template chooser ------------------------------------------------------- */
+
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.template-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: inherit;
+  text-align: left;
+  cursor: default;
+  transition: border-color var(--duration-fast) ease;
+}
+
+.template-card:hover,
+.template-card[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--surface-selected);
+}
+
+.template-card .preview {
+  height: 108px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-canvas);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.template-card .preview svg {
+  width: 100%;
+  height: 100%;
+}
+
+.template-card strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.template-card span {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* Shortcut reference ----------------------------------------------------- */
+
+.shortcut-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+}
+
+.shortcut-group h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.shortcut-group dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.shortcut-group dt {
+  color: var(--text-primary);
+}
+
+.shortcut-group dd {
+  margin: 0;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

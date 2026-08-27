@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    The list is deliberately short (brief §13).
+
+    allow-jit is required: WKWebView's JavaScript engine allocates
+    just-in-time compiled code, which the Hardened Runtime blocks without it.
+
+    The App Sandbox is not enabled. FlowShark ships with a Developer ID and a
+    DMG, where the sandbox is optional, and staying outside it keeps Open and
+    Save working without security-scoped bookmarks. If the app is ever
+    submitted to the Mac App Store, add com.apple.security.app-sandbox and
+    com.apple.security.files.user-selected.read-write here, and add bookmark
+    handling to the Open Recent list. See DECISIONS.md, D-004.
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>

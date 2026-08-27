@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>FlowShark</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='4' width='12' height='8' rx='2' fill='%232b5fd9'/%3E%3Crect x='17' y='20' width='12' height='8' rx='2' fill='%232b5fd9'/%3E%3Cpath d='M9 12v6h14v2' fill='none' stroke='%2344506b' stroke-width='2'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/src/styles/app.css" />
+  </head>
+  <body>
+    <!-- Fallback menu bar. macOS shows the real menu bar in the system menu;
+         this row appears only when the app runs outside the Tauri shell. -->
+    <div id="fallback-menubar" class="fallback-menubar" hidden></div>
+
+    <div class="app" id="app">
+      <header class="toolbar" id="toolbar" role="toolbar" aria-label="FlowShark toolbar"></header>
+
+      <div class="workspace">
+        <aside class="sidebar" id="sidebar" aria-label="Shape library"></aside>
+
+        <main class="canvas-area" id="canvas-area">
+          <div class="canvas-scroll" id="canvas-scroll" tabindex="0"
+               role="application" aria-label="Diagram canvas"
+               aria-describedby="canvas-help">
+            <svg class="canvas" id="canvas" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <defs id="canvas-defs"></defs>
+              <g id="canvas-root"></g>
+            </svg>
+            <svg class="overlay" id="overlay" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <g id="overlay-root"></g>
+            </svg>
+            <div class="text-editor-layer" id="text-editor-layer"></div>
+          </div>
+          <p id="canvas-help" class="visually-hidden">
+            Use the arrow keys to move the selection, Tab to step through elements,
+            Return to edit text, and Escape to stop editing.
+          </p>
+          <!-- The accessible mirror of the diagram: VoiceOver reads this tree,
+               which stays in step with the canvas. -->
+          <div class="diagram-outline" id="diagram-outline" role="tree"
+               aria-label="Diagram structure"></div>
+          <div class="zoom-controls" id="zoom-controls"></div>
+        </main>
+
+        <aside class="inspector" id="inspector" aria-label="Inspector"></aside>
+      </div>
+
+      <footer class="statusbar" id="statusbar"></footer>
+    </div>
+
+    <div class="dialog-layer" id="dialog-layer"></div>
+    <div class="toast-layer" id="toast-layer" role="status" aria-live="polite"></div>
+    <div class="live-region visually-hidden" id="live-region" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

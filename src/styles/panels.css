@@ -1,0 +1,305 @@
+/* The shape sidebar, the inspector, and the accessible outline. */
+
+.sidebar,
+.inspector {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-panel);
+  overflow: hidden;
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  border-right: 1px solid var(--border-soft);
+}
+
+.inspector {
+  width: var(--inspector-width);
+  border-left: 1px solid var(--border-soft);
+}
+
+.sidebar[hidden],
+.inspector[hidden] {
+  display: none;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.panel-section {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.panel-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: default;
+  list-style: none;
+}
+
+.panel-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.panel-section > summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform var(--duration-fast) ease;
+}
+
+.panel-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.panel-section .section-content {
+  padding: 4px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Shape grid ------------------------------------------------------------- */
+
+.shape-search {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.shape-search input {
+  width: 100%;
+}
+
+.shape-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 4px;
+  padding: 4px 10px 12px;
+}
+
+.shape-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  line-height: 1.15;
+  text-align: center;
+  cursor: grab;
+  transition: background var(--duration-fast) ease;
+}
+
+.shape-tile:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-soft);
+  color: var(--text-primary);
+}
+
+.shape-tile[aria-pressed='true'] {
+  background: var(--surface-selected);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.shape-tile svg {
+  width: 42px;
+  height: 30px;
+  pointer-events: none;
+}
+
+.shape-tile .glyph-fill {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.shape-tile .glyph-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.empty-note {
+  padding: 16px 12px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Inspector rows --------------------------------------------------------- */
+
+.row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.row > label,
+.row > .row-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Grid and flex children default to a minimum size of their content, which
+   would push a text field past the edge of the panel. */
+.row > *,
+.row-wide > *,
+.grid-2 > *,
+.row-inline > * {
+  min-width: 0;
+}
+
+.row > input,
+.row > select,
+.row > textarea,
+.row-wide > input,
+.row-wide > select,
+.row-wide > textarea {
+  width: 100%;
+}
+
+.row-inline > input[type='text'],
+.row-inline > input[type='number'],
+.row-inline > input[type='search'] {
+  flex: 1 1 auto;
+}
+
+.panel-body textarea {
+  resize: vertical;
+}
+
+.row-wide {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.row-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.button-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 2px;
+}
+
+.preset-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.preset-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: default;
+}
+
+.preset-chip:hover {
+  background: var(--surface-hover);
+}
+
+.preset-chip .dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--border-hairline);
+}
+
+/* Accessible outline ----------------------------------------------------- */
+
+.diagram-outline {
+  position: absolute;
+  inset: auto auto 0 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Zoom controls ---------------------------------------------------------- */
+
+.zoom-controls {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.zoom-controls .zoom-value {
+  min-width: 52px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}

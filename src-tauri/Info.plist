@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Tauri merges this file into the generated Info.plist on macOS. It declares
+    the .flowshark document type so the Finder shows the document icon, opens
+    documents on a double-click, and offers FlowShark under Open With.
+  -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>FlowShark Document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>CFBundleTypeIconFile</key>
+      <string>document.icns</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.flowshark.document</string>
+      </array>
+    </dict>
+  </array>
+
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.flowshark.document</string>
+      <key>UTTypeDescription</key>
+      <string>FlowShark Document</string>
+      <key>UTTypeIconFile</key>
+      <string>document.icns</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+        <string>public.content</string>
+        <string>public.json</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>flowshark</string>
+        </array>
+        <key>public.mime-type</key>
+        <array>
+          <string>application/vnd.flowshark+json</string>
+        </array>
+      </dict>
+    </dict>
+  </array>
+
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright © 2026 FlowShark</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.graphics-design</string>
+  <key>NSSupportsAutomaticGraphicsSwitching</key>
+  <true/>
+</dict>
+</plist>

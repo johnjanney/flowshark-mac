@@ -1,0 +1,194 @@
+/*
+ * Appearance tokens.
+ *
+ * FlowShark does not imitate the macOS 26 Liquid Glass materials. A WebView
+ * cannot reproduce them, and a near-miss looks worse than a clean design of its
+ * own (see the brief, §15). Instead the app uses a flat, high-contrast palette
+ * that sits comfortably next to system windows in both appearances.
+ *
+ * Every colour is defined once on :root for the light appearance and
+ * redefined for dark. Nothing is defined only inside a media query.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces */
+  --surface-window: #f2f3f6;
+  --surface-panel: #fbfbfd;
+  --surface-raised: #ffffff;
+  --surface-canvas: #fafbfc;
+  --surface-sunken: #e9ebf0;
+  --surface-hover: rgba(15, 20, 30, 0.05);
+  --surface-active: rgba(15, 20, 30, 0.1);
+  --surface-selected: rgba(43, 95, 217, 0.12);
+
+  /* Text */
+  --text-primary: #10151f;
+  --text-secondary: #5a6377;
+  --text-tertiary: #868da0;
+  --text-inverse: #ffffff;
+
+  /* Lines */
+  --border-strong: #c3c8d4;
+  --border-soft: #dfe2ea;
+  --border-hairline: rgba(15, 20, 30, 0.1);
+
+  /* Accent */
+  --accent: #2b5fd9;
+  --accent-hover: #234fba;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(43, 95, 217, 0.14);
+
+  /* Feedback */
+  --danger: #c22a3f;
+  --warning: #a86a12;
+  --success: #1f7a4d;
+
+  /* Canvas furniture */
+  --grid-line: #e4e7ee;
+  --grid-line-strong: #ccd2de;
+  --guide-line: #e0245e;
+  --spacing-guide: #b45cd4;
+  --handle-fill: #ffffff;
+  --handle-stroke: #2b5fd9;
+  --marquee-fill: rgba(43, 95, 217, 0.1);
+  --page-boundary: #b8bfcd;
+
+  /* Metrics */
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --toolbar-height: 52px;
+  --statusbar-height: 26px;
+  --sidebar-width: 236px;
+  --inspector-width: 268px;
+  --traffic-light-inset: 78px;
+
+  --shadow-panel: 0 1px 3px rgba(15, 20, 30, 0.1), 0 8px 24px rgba(15, 20, 30, 0.08);
+  --shadow-popover: 0 4px 12px rgba(15, 20, 30, 0.16), 0 16px 40px rgba(15, 20, 30, 0.16);
+
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',
+    Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Monaco, 'Courier New', monospace;
+
+  --duration-fast: 120ms;
+  --duration-medium: 200ms;
+}
+
+/* Dark appearance follows the system unless the user has forced light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-appearance='light']) {
+    --surface-window: #1b1d23;
+    --surface-panel: #23262e;
+    --surface-raised: #2b2f38;
+    --surface-canvas: #16181d;
+    --surface-sunken: #131519;
+    --surface-hover: rgba(255, 255, 255, 0.07);
+    --surface-active: rgba(255, 255, 255, 0.12);
+    --surface-selected: rgba(90, 140, 255, 0.2);
+
+    --text-primary: #eef0f5;
+    --text-secondary: #a7aebe;
+    --text-tertiary: #79808f;
+    --text-inverse: #10151f;
+
+    --border-strong: #454b57;
+    --border-soft: #343943;
+    --border-hairline: rgba(255, 255, 255, 0.1);
+
+    --accent: #5a8cff;
+    --accent-hover: #7aa3ff;
+    --accent-text: #0b1020;
+    --accent-soft: rgba(90, 140, 255, 0.2);
+
+    --danger: #ff6b81;
+    --warning: #e3a13c;
+    --success: #4cc38a;
+
+    --grid-line: #24272e;
+    --grid-line-strong: #31353e;
+    --guide-line: #ff5c8a;
+    --spacing-guide: #d18cf0;
+    --handle-fill: #16181d;
+    --handle-stroke: #5a8cff;
+    --marquee-fill: rgba(90, 140, 255, 0.16);
+    --page-boundary: #4a5160;
+
+    --shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.45);
+    --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.55), 0 16px 40px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* Forced dark, chosen in Settings. */
+:root[data-appearance='dark'] {
+  --surface-window: #1b1d23;
+  --surface-panel: #23262e;
+  --surface-raised: #2b2f38;
+  --surface-canvas: #16181d;
+  --surface-sunken: #131519;
+  --surface-hover: rgba(255, 255, 255, 0.07);
+  --surface-active: rgba(255, 255, 255, 0.12);
+  --surface-selected: rgba(90, 140, 255, 0.2);
+
+  --text-primary: #eef0f5;
+  --text-secondary: #a7aebe;
+  --text-tertiary: #79808f;
+  --text-inverse: #10151f;
+
+  --border-strong: #454b57;
+  --border-soft: #343943;
+  --border-hairline: rgba(255, 255, 255, 0.1);
+
+  --accent: #5a8cff;
+  --accent-hover: #7aa3ff;
+  --accent-text: #0b1020;
+  --accent-soft: rgba(90, 140, 255, 0.2);
+
+  --danger: #ff6b81;
+  --warning: #e3a13c;
+  --success: #4cc38a;
+
+  --grid-line: #24272e;
+  --grid-line-strong: #31353e;
+  --guide-line: #ff5c8a;
+  --spacing-guide: #d18cf0;
+  --handle-fill: #16181d;
+  --handle-stroke: #5a8cff;
+  --marquee-fill: rgba(90, 140, 255, 0.16);
+  --page-boundary: #4a5160;
+
+  --shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.55), 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* Increase Contrast: firmer lines and stronger text. */
+@media (prefers-contrast: more) {
+  :root {
+    --border-strong: #6b7285;
+    --border-soft: #9aa1b1;
+    --border-hairline: rgba(15, 20, 30, 0.3);
+    --text-secondary: #384253;
+    --text-tertiary: #4d566a;
+  }
+
+  :root:not([data-appearance='light']) {
+    --border-strong: #8b93a5;
+    --border-soft: #6d7486;
+    --text-secondary: #d3d8e3;
+    --text-tertiary: #b3bac9;
+  }
+}
+
+/* Reduce Motion: no transitions or animations anywhere. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-medium: 0ms;
+  }
+}
+
+:root[data-reduce-motion='always'] {
+  --duration-fast: 0ms;
+  --duration-medium: 0ms;
+}
