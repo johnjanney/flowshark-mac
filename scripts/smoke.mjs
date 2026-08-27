@@ -10,7 +10,31 @@
 
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+
+/**
+ * Launch Chromium.
+ *
+ * Playwright's own resolution is tried first, which is what works on a
+ * developer's machine and on CI after `playwright install`. Some sandboxes
+ * ship a browser at a fixed path whose revision does not match the installed
+ * Playwright, so an explicit path is used as a fallback — never as the default,
+ * because hardcoding it is what broke this on CI.
+ */
+async function launchChromium() {
+  const args = ['--no-sandbox'];
+  const explicit = process.env.CHROMIUM_PATH;
+  if (explicit) return chromium.launch({ args, executablePath: explicit });
+
+  try {
+    return await chromium.launch({ args });
+  } catch (error) {
+    const fallback = '/opt/pw-browsers/chromium';
+    if (!existsSync(fallback)) throw error;
+    console.log(`  (using the browser at ${fallback})`);
+    return chromium.launch({ args, executablePath: fallback });
+  }
+}
 
 const SHOTS = 'screenshots';
 
@@ -20,7 +44,7 @@ async function main() {
   await server.listen();
   const url = 'http://localhost:5178/';
 
-  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium', args: ['--no-sandbox'] });
+  const browser = await launchChromium();
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
   const failures = [];

@@ -49,6 +49,8 @@ jobs:
       - name: Build, sign, notarise, and staple
         uses: tauri-apps/tauri-action@v0
         env:
+          # Required: tauri-action creates the release through the API.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Signing identity and certificate.
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -67,14 +69,30 @@ jobs:
           prerelease: false
           args: --target aarch64-apple-darwin
 
-      - name: Confirm the notarisation ticket is stapled
+      - name: Check the bundle
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' | head -n 1)"
-          if [ -z "$APP" ]; then
-            echo "No .app bundle was produced." >&2
+          BUNDLE=src-tauri/target/aarch64-apple-darwin/release/bundle
+          APP="$(find "$BUNDLE/macos" -maxdepth 1 -name '*.app' | head -n 1)"
+          DMG="$(find "$BUNDLE/dmg" -maxdepth 1 -name '*.dmg' | head -n 1)"
+
+          if [ -z "$APP" ] || [ -z "$DMG" ]; then
+            echo "Expected both an .app and a .dmg; got app='$APP' dmg='$DMG'." >&2
             exit 1
           fi
+          echo "Built $APP and $DMG."
+
+          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            # Without a Developer ID this is an ad-hoc signed build. It runs
+            # after the user allows it once; it is not distributable as-is.
+            echo "::warning::No signing identity configured, so this build is unsigned."
+            echo "::warning::Recipients will meet a Gatekeeper warning on first launch."
+            codesign --display --verbose=2 "$APP" || true
+            exit 0
+          fi
+
+          # With a Developer ID, every one of these must hold.
           codesign --verify --deep --strict --verbose=2 "$APP"
-          # Only meaningful when notarisation secrets are configured.
-          xcrun stapler validate "$APP" || echo "No stapled ticket: notarisation secrets may be missing."
-          spctl --assess --type execute --verbose "$APP" || true
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose "$APP"
