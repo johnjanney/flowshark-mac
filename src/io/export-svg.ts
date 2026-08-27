@@ -10,7 +10,7 @@ import type { Rect } from '../model/geometry';
 import { round } from '../model/geometry';
 import type { ElementId, FlowsharkDocument } from '../model/types';
 import { buildScene, escapeXml, type SceneTheme } from '../canvas/scene';
-import { exportRegion, type ExportOptions } from './export';
+import { expandExportSelection, exportRegion, type ExportOptions } from './export';
 
 const EXPORT_THEME: SceneTheme = {
   background: null,
@@ -32,7 +32,7 @@ export function buildStandaloneSvg(
   const region = exportRegion(doc, options, selection);
   const only =
     options.scope === 'selection' && selection.length > 0
-      ? new Set<ElementId>(collectSelection(doc, selection))
+      ? expandExportSelection(doc, selection)
       : undefined;
 
   const scene = buildScene(doc, {
@@ -69,21 +69,4 @@ export function buildStandaloneSvg(
     `<defs>${scene.defs}</defs>${background}${scene.body}</svg>\n`;
 
   return { svg, region };
-}
-
-/** Selection plus the descendants of any selected group. */
-function collectSelection(
-  doc: FlowsharkDocument,
-  selection: readonly ElementId[],
-): ElementId[] {
-  const out = new Set<ElementId>();
-  const stack = [...selection];
-  while (stack.length > 0) {
-    const id = stack.pop()!;
-    const element = doc.elements[id];
-    if (!element) continue;
-    out.add(id);
-    if (element.kind === 'group') stack.push(...element.children);
-  }
-  return [...out];
 }

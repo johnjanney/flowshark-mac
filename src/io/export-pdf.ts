@@ -28,7 +28,7 @@ import {
 import { pointAlongPolyline, tangentAlongPolyline } from '../model/geometry';
 import { parsePath, transformSegments, type PathSegment } from './svg-path';
 import { PdfWriter, fmt, isWinAnsiSafe, pdfColor, pdfString } from './pdf-writer';
-import { exportRegion, type ExportOptions } from './export';
+import { expandExportSelection, exportRegion, type ExportOptions } from './export';
 import { buildStandaloneSvg } from './export-svg';
 import { svgToCanvas } from './export-raster';
 
@@ -427,22 +427,6 @@ function drawConnector(
 // Entry points
 // ---------------------------------------------------------------------------
 
-function collectSelection(
-  doc: FlowsharkDocument,
-  selection: readonly ElementId[],
-): Set<ElementId> {
-  const out = new Set<ElementId>();
-  const stack = [...selection];
-  while (stack.length > 0) {
-    const id = stack.pop()!;
-    const element = doc.elements[id];
-    if (!element) continue;
-    out.add(id);
-    if (element.kind === 'group') stack.push(...element.children);
-  }
-  return out;
-}
-
 function inspectDocument(
   doc: FlowsharkDocument,
   only: Set<ElementId> | undefined,
@@ -480,7 +464,7 @@ function buildVectorPdf(
   const region = exportRegion(doc, options, selection);
   const only =
     options.scope === 'selection' && selection.length > 0
-      ? collectSelection(doc, selection)
+      ? expandExportSelection(doc, selection)
       : undefined;
 
   const content = new ContentStream();
@@ -634,7 +618,7 @@ export async function exportPdf(
 ): Promise<PdfResult> {
   const only =
     options.scope === 'selection' && selection.length > 0
-      ? collectSelection(doc, selection)
+      ? expandExportSelection(doc, selection)
       : undefined;
   const inspection = inspectDocument(doc, only);
 

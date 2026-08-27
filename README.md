@@ -7,9 +7,15 @@ would put in front of a client.
 ![FlowShark editing a basic flowchart](docs/screenshot-light.png)
 
 <details>
-<summary>The same window in dark appearance</summary>
+<summary>More screenshots</summary>
+
+The same window in dark appearance:
 
 ![FlowShark in dark appearance](docs/screenshot-dark.png)
+
+The cross-functional flowchart template, with swimlanes:
+
+![A cross-functional flowchart with three swimlanes](docs/screenshot-swimlane.png)
 
 </details>
 

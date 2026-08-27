@@ -36,6 +36,7 @@ including the ones that cost something — and **what would reverse it**.
   · [D-010](#d-010-no-svg-import-yet)
   · [D-012](#d-012-layers-in-the-model-no-layers-panel)
   · [D-013](#d-013-no-updater-yet)
+  · [D-025](#d-025-a-fixed-toolbar)
 - [Other](#other)
   — [D-011](#d-011-a-colour-blind-safe-default-palette)
   · [D-018](#d-018-keep-the-name-flowshark)
@@ -538,6 +539,26 @@ launch.
 install. `tauri-plugin-updater` is then the least work: add the plugin,
 generate a key pair, publish `latest.json` alongside each release, and keep the
 private key in the same secret store as the signing certificate.
+
+### D-025: A fixed toolbar
+
+**Context.** The brief asks for an `NSToolbar` equivalent that the user can
+customise (§8.13).
+
+**Decision.** Ship a fixed toolbar carrying the default item set the brief
+lists — tools, undo and redo, align, distribute, group, ungroup, export,
+print, and the two panel toggles — with no customisation sheet.
+
+**Reasoning.** Customisation is only worth having once there are more items
+than fit, and it needs a persisted per-user arrangement, a drag-and-drop
+configuration sheet, and a migration path for when the default set changes.
+The rule that matters more is already kept: everything in the toolbar is also
+in the menu bar, so nothing is lost by the toolbar not showing it.
+
+**What would reverse it.** The toolbar growing past what fits at a common
+window width. Every item is already a registered command with an icon and a
+title, so a customisation sheet would be presentation work rather than
+plumbing.
 
 ---
 

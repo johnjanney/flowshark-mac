@@ -11,6 +11,7 @@ import type { Point, Rect } from '../model/geometry';
 import { rectCenter, unionRects } from '../model/geometry';
 import { createId } from '../model/ids';
 import {
+  DEFAULT_LABEL_OFFSET,
   createConnectorElement,
   createShapeElement,
   defaultLabelTextStyle,
@@ -706,7 +707,7 @@ export function addConnectorLabel(store: Store, connectorId: ElementId): string 
           text: 'Label',
           style: defaultLabelTextStyle(),
           position: 0.5,
-          offset: 0,
+          offset: DEFAULT_LABEL_OFFSET,
           background: null,
           border: null,
         },

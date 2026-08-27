@@ -99,6 +99,13 @@ export function defaultConnectorStyle(): ConnectorStyle {
   };
 }
 
+/**
+ * Connector labels sit just off the line rather than on top of it, which is
+ * how a "Yes" or "No" beside a decision branch is conventionally drawn and
+ * what keeps the text readable over the grid.
+ */
+export const DEFAULT_LABEL_OFFSET = -12;
+
 export function defaultLabelTextStyle(): TextStyle {
   return {
     ...defaultTextStyle(),
@@ -282,7 +289,7 @@ export function createConnectorElement(
       text: options.label,
       style: defaultLabelTextStyle(),
       position: 0.5,
-      offset: 0,
+      offset: DEFAULT_LABEL_OFFSET,
       background: null,
       border: null,
     });

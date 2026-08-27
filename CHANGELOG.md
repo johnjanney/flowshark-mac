@@ -107,7 +107,9 @@ These are known and deliberate, not defects. Each is explained in
   is no layers panel and every new element goes on one layer (D-012).
 - Text is styled per element rather than per character, and there are no bullet
   or numbered lists (D-007).
-- No minimap.
+- The toolbar has a fixed set of items and cannot be customised the way an
+  `NSToolbar` can (D-025).
+- No minimap or page overview.
 - No built-in update mechanism (D-013).
 - Right-to-left text is not specifically handled.
 

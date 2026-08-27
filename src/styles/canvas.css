@@ -231,7 +231,8 @@
 .toast-layer {
   position: fixed;
   right: 16px;
-  bottom: 44px;
+  /* Clear of the floating zoom controls in the same corner. */
+  bottom: 76px;
   z-index: 500;
   display: flex;
   flex-direction: column;

@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { getTemplate } from '../src/templates';
 import { buildStandaloneSvg } from '../src/io/export-svg';
-import { defaultExportOptions, exportRegion } from '../src/io/export';
+import {
+  defaultExportOptions,
+  expandExportSelection,
+  exportRegion,
+} from '../src/io/export';
+import { boundsOf } from '../src/model/document';
 import { exportVectorPdf } from '../src/io/export-pdf';
 import { isWinAnsiSafe, pdfColor, pdfString } from '../src/io/pdf-writer';
 import { parsePath } from '../src/io/svg-path';
@@ -51,6 +56,37 @@ describe('SVG export', () => {
       [one],
     ).svg;
     expect(some.length).toBeLessThan(all.length);
+  });
+
+  it('keeps the connector between two selected shapes', () => {
+    const doc = getTemplate('basic-flowchart')!.build();
+    const connector = Object.values(doc.elements).find(
+      (element) => element.kind === 'connector',
+    );
+    if (!connector || connector.kind !== 'connector') throw new Error('no connector');
+    const shapes = [connector.source.elementId!, connector.target.elementId!];
+
+    const expanded = expandExportSelection(doc, shapes);
+    expect(expanded.has(connector.id)).toBe(true);
+
+    // The region has to grow to hold the connector, not just the two shapes.
+    const withConnector = exportRegion(
+      doc,
+      { ...defaultExportOptions(), scope: 'selection' },
+      shapes,
+    );
+    const shapesOnly = boundsOf(doc, shapes)!;
+    expect(withConnector.height).toBeGreaterThanOrEqual(shapesOnly.height);
+  });
+
+  it('excludes a connector when only one of its ends is selected', () => {
+    const doc = getTemplate('basic-flowchart')!.build();
+    const connector = Object.values(doc.elements).find(
+      (element) => element.kind === 'connector',
+    );
+    if (!connector || connector.kind !== 'connector') throw new Error('no connector');
+    const expanded = expandExportSelection(doc, [connector.source.elementId!]);
+    expect(expanded.has(connector.id)).toBe(false);
   });
 
   it('escapes user text so it cannot inject markup', () => {

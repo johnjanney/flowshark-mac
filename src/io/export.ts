@@ -8,6 +8,7 @@
 import type { Rect } from '../model/geometry';
 import { inflateRect, unionRects } from '../model/geometry';
 import { boundsOf, documentBounds, rootOf } from '../model/document';
+import { isConnector } from '../model/types';
 import type { ElementId, FlowsharkDocument } from '../model/types';
 
 export type ExportScope = 'document' | 'selection' | 'page';
@@ -37,6 +38,34 @@ export function defaultExportOptions(): ExportOptions {
   };
 }
 
+/**
+ * Everything an export of `selection` should contain: the selected elements,
+ * the contents of any selected group, and any connector whose two ends are
+ * both in the set — exporting two connected shapes without the arrow between
+ * them is never what the user meant.
+ */
+export function expandExportSelection(
+  doc: FlowsharkDocument,
+  selection: readonly ElementId[],
+): Set<ElementId> {
+  const out = new Set<ElementId>();
+  const stack = selection.map((id) => rootOf(doc, id));
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    const element = doc.elements[id];
+    if (!element || out.has(id)) continue;
+    out.add(id);
+    if (element.kind === 'group') stack.push(...element.children);
+  }
+  for (const element of Object.values(doc.elements)) {
+    if (!isConnector(element) || out.has(element.id)) continue;
+    const source = element.source.elementId;
+    const target = element.target.elementId;
+    if (source && target && out.has(source) && out.has(target)) out.add(element.id);
+  }
+  return out;
+}
+
 /** The region an export covers, already including the margin. */
 export function exportRegion(
   doc: FlowsharkDocument,
@@ -52,7 +81,7 @@ export function exportRegion(
 
   let bounds: Rect | null;
   if (options.scope === 'selection' && selection.length > 0) {
-    bounds = boundsOf(doc, [...new Set(selection.map((id) => rootOf(doc, id)))]);
+    bounds = boundsOf(doc, [...expandExportSelection(doc, selection)]);
   } else {
     bounds = documentBounds(doc);
   }
