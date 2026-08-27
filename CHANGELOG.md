@@ -227,6 +227,9 @@ covers everything in the MVP scope of the project brief.
   transparency, an optional grid, and 1x, 2x, or 3x resolution.
 - Self-contained SVG with no scripts and no external references.
 - Printing through the standard macOS Print panel, which offers Save as PDF.
+  The panel is opened through the webview's own print method rather than
+  JavaScript's `window.print()`, which WKWebView leaves to the host
+  application and would otherwise do nothing.
 - Copy as Image (`⇧⌘C`), which writes one pasteboard item carrying
   `com.adobe.pdf`, `public.png`, `public.svg-image`, and
   `public.utf8-plain-text`, so Keynote and Pages take the vector PDF, a browser

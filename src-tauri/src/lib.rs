@@ -42,6 +42,7 @@ pub fn run() {
             files::file_modified_at,
             files::write_temp_file,
             windows::open_new_window,
+            windows::print_window,
             windows::take_pending_open_file,
             #[cfg(target_os = "macos")]
             macos::copy_diagram_to_pasteboard,

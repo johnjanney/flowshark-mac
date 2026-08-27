@@ -121,6 +121,7 @@ import {
   onOpenFileRequest,
   openNewWindow,
   pendingLaunchFile,
+  printWindow,
   setWindowTitle,
 } from './platform/window';
 
@@ -874,8 +875,11 @@ export class FlowSharkApp {
       window.removeEventListener('afterprint', cleanUp);
     };
     window.addEventListener('afterprint', cleanUp);
-    window.print();
-    // Safari fires afterprint reliably, but remove the sheet anyway.
+    void printWindow().catch((error) => {
+      cleanUp();
+      void this.reportError('The Print panel could not be opened.', error);
+    });
+    // The sheet is removed on afterprint, but not every host fires it.
     setTimeout(cleanUp, 8000);
   }
 

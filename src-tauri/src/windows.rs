@@ -1,6 +1,6 @@
 //! Window management and Finder integration.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 #[cfg(target_os = "macos")]
 use tauri::{Emitter, Url};
 
@@ -37,6 +37,17 @@ pub fn open_new_window(app: AppHandle) -> Result<(), String> {
 
     builder.build().map_err(|error| error.to_string())?;
     Ok(())
+}
+
+/// Open the system Print panel for this window.
+///
+/// `window.print()` in JavaScript is not reliable in WKWebView — the panel is
+/// the host application's job to present — so printing goes through the
+/// webview's own print method instead. The page's print stylesheet still
+/// decides what appears on the paper.
+#[tauri::command]
+pub fn print_window(window: WebviewWindow) -> Result<(), String> {
+    window.print().map_err(|error| error.to_string())
 }
 
 /// Hand the front end the file the app was launched with, if any.

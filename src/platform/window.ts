@@ -47,6 +47,22 @@ export async function closeWindow(): Promise<void> {
 }
 
 /**
+ * Open the system Print panel.
+ *
+ * `window.print()` is not reliable in WKWebView, where presenting the panel is
+ * the host application's job, so the macOS path asks the shell to do it. Both
+ * routes print the same thing: the page, filtered by its print stylesheet.
+ */
+export async function printWindow(): Promise<void> {
+  if (!isNative()) {
+    window.print();
+    return;
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('print_window');
+}
+
+/**
  * Listen for a file the Finder asked the app to open: a double-click, a drag
  * onto the Dock icon, or Open With.
  */
