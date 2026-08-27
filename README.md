@@ -38,6 +38,11 @@ The cross-functional flowchart template, with swimlanes:
 
 ---
 
+> **Scope.** FlowShark is built for personal and in-company use, not for public
+> sale. That is why it ships as a signed DMG rather than through the Mac App
+> Store, and why several decisions in [DECISIONS.md](DECISIONS.md) come down
+> the way they do.
+
 ## Requirements
 
 | | |

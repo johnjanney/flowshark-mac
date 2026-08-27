@@ -162,11 +162,19 @@ Hardened Runtime. Do not enable the App Sandbox. Request exactly one
 entitlement, `com.apple.security.cs.allow-jit`, which WKWebView's JavaScript
 engine needs.
 
+FlowShark is built for personal and in-company use rather than public sale
+(D-018), which settles this rather than merely starting here: the App Store
+would add the sandbox, a review cycle, and an unverified entitlement question,
+in exchange for a distribution channel the project does not need. Signing and
+notarising still matter, because colleagues installing it should not meet a
+Gatekeeper warning.
+
 **Consequences.** Open and Save work without security-scoped bookmarks, so
 Open Recent survives a restart with no extra machinery. The entitlement list is
 as short as it can be. FlowShark is not on the Mac App Store.
 
-**What would reverse it.** A decision to submit to the App Store. That means
+**What would reverse it.** A decision to sell the app or list it publicly.
+That means
 adding `com.apple.security.app-sandbox` and
 `com.apple.security.files.user-selected.read-write`, adding security-scoped
 bookmarks to the recent-files list, and testing the JIT entitlement against App
@@ -649,9 +657,22 @@ extension, and asks for confirmation before shipping (§0.3).
 **Decision.** Keep it. It is short, it is easy to say, and it is already the
 file extension, the UTI, and the bundle identifier.
 
-**Open point.** A trademark search has not been done. Do that before the first
-public release — changing the name later means changing the bundle identifier
-too, with the consequences described in D-003.
+**On the name being taken.** A search found several companies already using
+"FlowShark" — an SDN product, an email triage tool, a stock trading service,
+and a wastewater management company among them. The name is therefore not
+distinctive and would not be defensible.
+
+That does not block this project. FlowShark is built for personal and
+in-company use and is not distributed to the public, so there is no trade in
+the name to infringe and nothing to defend. The question is closed on that
+basis rather than on the name being free.
+
+**What would reverse it.** A decision to release publicly or sell the app. At
+that point the name needs a proper clearance search and, on the evidence above,
+would very likely have to change — which also means changing the bundle
+identifier and the UTI, with the consequences set out in D-003. Renaming is
+cheap now and expensive after the first release, so that decision should be
+made before it, not after.
 
 ### D-021: Generate the icons from a script
 
@@ -732,14 +753,18 @@ feedback is too chatty during a drag.
 
 ## Still open
 
-Decisions the brief asks to be closed that this repository cannot close on its
-own:
+Decisions the brief asks to be closed (§0.3), and where each one stands:
 
 | Question | Status |
 |---|---|
+| Intel support | Settled: Apple Silicon only (D-001) |
 | Bundle identifier | Settled: `io.github.johnjanney.flowshark-mac` (D-003) |
-| Product name | Kept; a trademark search is outstanding (D-018) |
-| Gate 1, on Apple Silicon | Must be re-run on real hardware |
-| Gate 2, with VoiceOver | Must be run on real hardware |
-| Signing identity | CI is wired for it; the certificate and secrets are not in place |
-| Distribution channel | Developer ID and DMG (D-004); revisit only if the App Store is wanted |
+| Distribution channel | Settled: Developer ID and DMG (D-004) |
+| Product name | Settled: FlowShark, for personal and in-company use (D-018) |
+| Gate 1, on Apple Silicon | **Open.** Must be run on real hardware |
+| Gate 2, with VoiceOver | **Open.** Must be run on real hardware |
+| Signing identity | **Open.** CI is wired for it; the certificate and secrets are not in place |
+
+The two gates are the only questions left that this repository cannot answer
+for itself, and both need a Mac. What to measure is in
+[Milestone 0 gates](#milestone-0-gates) above.
