@@ -8,7 +8,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Documents are plain JSON; anything much larger than this is not a diagram.
 const MAX_DOCUMENT_BYTES: u64 = 256 * 1024 * 1024;
@@ -102,6 +102,34 @@ pub fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// Write bytes to a uniquely named file in the system temporary directory and
+/// return its path.
+///
+/// Used by Share and by dragging a diagram out of the window: both hand a real
+/// file to another application, and both need it on disk before they start.
+#[tauri::command]
+pub fn write_temp_file(name: String, contents: Vec<u8>) -> Result<String, String> {
+    // Keep only the last path component, so a caller cannot escape the
+    // temporary directory with a name like "../../.ssh/authorized_keys".
+    let safe_name = Path::new(&name)
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .filter(|value| !value.is_empty() && value != "." && value != "..")
+        .unwrap_or_else(|| "FlowShark".to_string());
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    let directory = std::env::temp_dir().join(format!("flowshark-{unique}"));
+    fs::create_dir_all(&directory).map_err(|error| describe(&error, &directory))?;
+
+    let path = directory.join(safe_name);
+    let path_text = path.to_string_lossy().to_string();
+    write_atomic(&path_text, &contents)?;
+    Ok(path_text)
+}
+
 /// Modification time in milliseconds since the Unix epoch.
 #[tauri::command]
 pub fn file_modified_at(path: String) -> Result<u64, String> {
@@ -119,6 +147,24 @@ pub fn file_modified_at(path: String) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_temporary_export_cannot_escape_the_temporary_directory() {
+        let path = write_temp_file("../../escape.png".to_string(), b"data".to_vec()).unwrap();
+        let path = Path::new(&path);
+        assert_eq!(path.file_name().unwrap(), "escape.png");
+        assert!(path.starts_with(std::env::temp_dir()));
+        assert_eq!(fs::read(path).unwrap(), b"data");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_temporary_export_keeps_its_name() {
+        let path = write_temp_file("My Diagram.pdf".to_string(), b"pdf".to_vec()).unwrap();
+        let path = Path::new(&path);
+        assert_eq!(path.file_name().unwrap(), "My Diagram.pdf");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
 
     #[test]
     fn temporary_path_sits_beside_the_target() {

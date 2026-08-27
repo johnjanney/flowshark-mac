@@ -20,6 +20,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build --target aarch64-apple-darwin",
     "tauri:build:universal": "tauri build --target universal-apple-darwin",
+    "check:macos": "node scripts/check-macos.mjs",
     "version:check": "node scripts/sync-version.mjs --check",
     "version:sync": "node scripts/sync-version.mjs",
     "smoke": "node scripts/smoke.mjs"

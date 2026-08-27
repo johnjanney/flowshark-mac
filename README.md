@@ -30,6 +30,9 @@ The cross-functional flowchart template, with swimlanes:
   equal-spacing detection, align, distribute, and size matching.
 - **Real exports.** PNG, JPEG, WebP, SVG, and vector PDF — all drawn from the
   same geometry as the screen, so what you export is what you saw.
+- **Fits the system.** Copy a diagram and Keynote takes the vector PDF while
+  Mail takes the PNG; share it through the system share sheet; drag it
+  straight out of the window into the Finder.
 - **Yours alone.** No account, no telemetry, no cloud. Documents are plain
   JSON files on your Mac.
 
@@ -99,6 +102,7 @@ system one and uses downloads in place of the Save panel.
 | `npm test` | Unit tests (Vitest) |
 | `npm run typecheck` | TypeScript, no emit |
 | `npm run smoke` | Drives the built app in headless Chromium |
+| `npm run check:macos` | Type-checks the macOS-only Rust code from any platform |
 | `npm run version:check` | Confirms all four version fields agree |
 | `cargo test` (in `src-tauri`) | Tests for the Rust shell |
 
@@ -163,7 +167,13 @@ The application version and the document schema version are independent. See
   Chromium: adding shapes, editing text, connecting, undoing, aligning,
   grouping, exporting, dropping an image, and reading the accessible outline.
   It fails on any console error and saves screenshots.
-- **Rust tests** (`cd src-tauri && cargo test`) cover the atomic save.
+- **Rust tests** (`cd src-tauri && cargo test`) cover the atomic save and the
+  temporary-file path used by Share and drag-out.
+- **A macOS cross-check** (`npm run check:macos`) compiles
+  `src-tauri/src/macos.rs` against the `aarch64-apple-darwin` target. That code
+  is behind `#[cfg(target_os = "macos")]`, so an ordinary `cargo check` on
+  another platform would skip it silently; this compiles it for real without
+  needing a Mac, because checking never links.
 
 ### Releasing
 
@@ -180,13 +190,13 @@ FlowShark is at `0.1.0`. These are the notable gaps, all recorded with their
 reasoning in [DECISIONS.md](DECISIONS.md) and tracked in
 [CHANGELOG.md](CHANGELOG.md):
 
-- Copying to the pasteboard covers PNG and text. PDF and SVG pasteboard types,
-  the system share sheet, and dragging a diagram out of the canvas into Finder
-  or Keynote need Objective-C bridging that has not been written yet.
-- No Quick Look preview or thumbnail for `.flowshark` files.
+- No Quick Look preview or thumbnail for `.flowshark` files, and no Spotlight
+  importer. These need separate Xcode targets inside the bundle, which Tauri
+  does not create.
 - No SVG import.
 - Layers exist in the document model but there is no layers panel.
 - Text is styled per element rather than per character.
+- The toolbar has a fixed set of items.
 - No automatic update mechanism.
 
 ## Licence

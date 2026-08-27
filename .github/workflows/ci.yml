@@ -78,6 +78,35 @@ jobs:
         run: cargo test
         working-directory: src-tauri
 
+  rust-cross-check:
+    name: Application shell (checked from Linux)
+    # The macOS-only code is compiled here as well, on the cheaper runner, so a
+    # mistake in it is caught even when the macOS jobs are skipped or queued.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: cross-check
+
+      - name: Install the Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev             libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev
+
+      - name: Type-check the macOS-only code
+        run: npm run check:macos
+
   bundle:
     name: Unsigned bundle
     runs-on: macos-14

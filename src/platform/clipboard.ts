@@ -1,13 +1,15 @@
 /**
  * Pasteboard access.
  *
- * FlowShark writes two standard macOS pasteboard types: `public.png` for
- * images and `public.utf8-plain-text` for text and for its own element data.
- * Applications such as Keynote, Pages, and Mail read the PNG type directly.
+ * A copied diagram is written as one pasteboard item carrying several
+ * representations — `com.adobe.pdf`, `public.png`, `public.svg-image`, and
+ * `public.utf8-plain-text`. Each receiving application then takes the best one
+ * it understands: Keynote and Pages take the vector PDF, a browser or a design
+ * tool takes the SVG, Mail and Messages take the PNG.
  *
- * Copying elements between FlowShark windows uses a JSON payload on the text
- * pasteboard, tagged with a marker so an ordinary text paste is never mistaken
- * for element data.
+ * Copying elements between FlowShark windows is a separate, much cheaper path:
+ * a JSON payload on the text pasteboard, tagged with a marker so an ordinary
+ * text paste is never mistaken for element data.
  */
 
 import { isNative } from './environment';
@@ -36,20 +38,55 @@ export async function readText(): Promise<string> {
   }
 }
 
-/** Put a PNG on the pasteboard as `public.png`. */
-export async function writePng(bytes: Uint8Array): Promise<void> {
+export interface DiagramPasteboardPayload {
+  /** PNG bytes, written as `public.png`. */
+  png?: Uint8Array;
+  /** PDF bytes, written as `com.adobe.pdf`. */
+  pdf?: Uint8Array;
+  /** SVG source, written as `public.svg-image`. */
+  svg?: string;
+  /** Plain text, written as `public.utf8-plain-text`. */
+  text?: string;
+}
+
+/**
+ * Write every representation of a diagram to the pasteboard at once.
+ *
+ * A browser can only offer PNG and text, and only from a user gesture, so the
+ * fallback writes what it can rather than failing.
+ */
+export async function writeDiagram(payload: DiagramPasteboardPayload): Promise<void> {
   if (isNative()) {
-    const { writeImage } = await import('@tauri-apps/plugin-clipboard-manager');
-    await writeImage(bytes);
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('copy_diagram_to_pasteboard', {
+      payload: {
+        png: payload.png ? Array.from(payload.png) : null,
+        pdf: payload.pdf ? Array.from(payload.pdf) : null,
+        svg: payload.svg ?? null,
+        text: payload.text ?? null,
+      },
+    });
     return;
   }
+
   const clipboard = navigator.clipboard;
-  if (!clipboard || typeof ClipboardItem === 'undefined') {
-    throw new Error('This browser does not allow copying images.');
+  if (clipboard && typeof ClipboardItem !== 'undefined' && payload.png) {
+    const buffer = new ArrayBuffer(payload.png.byteLength);
+    new Uint8Array(buffer).set(payload.png);
+    const parts: Record<string, Blob> = {
+      'image/png': new Blob([buffer], { type: 'image/png' }),
+    };
+    if (payload.text) {
+      parts['text/plain'] = new Blob([payload.text], { type: 'text/plain' });
+    }
+    await clipboard.write([new ClipboardItem(parts)]);
+    return;
   }
-  const buffer = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(buffer).set(bytes);
-  await clipboard.write([new ClipboardItem({ 'image/png': new Blob([buffer], { type: 'image/png' }) })]);
+  if (payload.text) {
+    await writeText(payload.text);
+    return;
+  }
+  throw new Error('This browser does not allow copying images.');
 }
 
 export interface PasteboardImage {

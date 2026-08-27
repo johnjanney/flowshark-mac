@@ -97,9 +97,16 @@ import {
   ELEMENT_CLIPBOARD_MARKER,
   readImage as readPasteboardImage,
   readText as readClipboardText,
-  writePng,
+  writeDiagram,
   writeText as writeClipboardText,
 } from './platform/clipboard';
+import {
+  beginFileDrag,
+  canShare,
+  shareFiles,
+  writeTemporaryFile,
+} from './platform/sharing';
+import { describeDiagram } from './io/describe';
 import { onFileDrop, readFileBytes } from './platform/dragdrop';
 import {
   IMPORTABLE_IMAGE_TYPES,
@@ -185,6 +192,11 @@ export class FlowSharkApp {
     this.applyPreferences();
 
     this.toolbar.mount();
+    const exportButton = document.querySelector<HTMLElement>('[data-command="file.export"]');
+    if (exportButton) {
+      this.makeDragSource(exportButton);
+      exportButton.title = `${exportButton.title} — drag to copy the diagram out`;
+    }
     this.sidebar.mount();
     this.inspector.mount();
     this.statusBar.mount();
@@ -705,22 +717,138 @@ export class FlowSharkApp {
     await this.runExport({ ...options, format });
   }
 
+  /** The options used when handing the diagram to another application. */
+  private handoffOptions(transparent: boolean): ExportOptions {
+    return {
+      scope: this.store.selection.length > 0 ? 'selection' : 'document',
+      transparent,
+      includeGrid: false,
+      scale: Math.max(this.store.getState().preferences.exportScale, 2),
+      margin: 16,
+      background: '#ffffff',
+    };
+  }
+
+  /**
+   * Copy the diagram under every pasteboard type at once, so each receiving
+   * application takes the representation it handles best.
+   */
   async copyAsImage(): Promise<void> {
     try {
-      const options: ExportOptions = {
-        scope: this.store.selection.length > 0 ? 'selection' : 'document',
-        transparent: true,
-        includeGrid: false,
-        scale: 2,
-        margin: 16,
-        background: '#ffffff',
-      };
-      const result = await exportRaster(this.store.document, options, this.store.selection, 'png');
-      await writePng(result.bytes);
-      showToast('Copied the diagram as a PNG image.');
+      const selection = this.store.selection;
+      const doc = this.store.document;
+      const png = await exportRaster(doc, this.handoffOptions(true), selection, 'png');
+      const { svg } = buildStandaloneSvg(doc, this.handoffOptions(true), selection);
+      const pdf = await exportPdf(doc, this.handoffOptions(false), selection, 'auto');
+      await writeDiagram({
+        png: png.bytes,
+        pdf: pdf.bytes,
+        svg,
+        text: describeDiagram(doc),
+      });
+      showToast('Copied the diagram as PDF, PNG, and SVG.');
     } catch (error) {
       await this.reportError('The diagram could not be copied.', error);
     }
+  }
+
+  /** Where a popover or a drag should start from, in window coordinates. */
+  private commandAnchor(commandId: string): { x: number; y: number } {
+    const node = document.querySelector<HTMLElement>(`[data-command="${commandId}"]`);
+    if (!node) {
+      const { width } = this.store.getState().view.viewport;
+      return { x: width / 2, y: 60 };
+    }
+    const rect = node.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.bottom };
+  }
+
+  /** Hand the diagram to the system share sheet. */
+  async share(): Promise<void> {
+    if (!canShare()) {
+      showToast('Sharing needs the macOS application.', 'warning');
+      return;
+    }
+    try {
+      const selection = this.store.selection;
+      const doc = this.store.document;
+      const png = await exportRaster(doc, this.handoffOptions(false), selection, 'png');
+      const path = await writeTemporaryFile(exportFileName(doc, 'png'), png.bytes);
+      await shareFiles([path], this.commandAnchor('file.share'));
+    } catch (error) {
+      await this.reportError('The diagram could not be shared.', error);
+    }
+  }
+
+  /**
+   * Prepare a file for dragging out of the window.
+   *
+   * PDF is used because it exports in a few milliseconds, so the file is on
+   * disk by the time the pointer has moved far enough to start a drag, and
+   * because Keynote, Pages, and Mail all embed it as vector art.
+   */
+  private async prepareDragFile(): Promise<string> {
+    const doc = this.store.document;
+    const pdf = await exportPdf(doc, this.handoffOptions(false), this.store.selection, 'auto');
+    return writeTemporaryFile(exportFileName(doc, 'pdf'), pdf.bytes);
+  }
+
+  /**
+   * Let a control act as a drag source for the diagram.
+   *
+   * The file is written as soon as the pointer goes down, so the drag can
+   * begin on the first movement — macOS only starts a drag session while it is
+   * handling a mouse event.
+   */
+  private makeDragSource(node: HTMLElement): void {
+    if (!canShare()) return;
+    let pending: Promise<string> | null = null;
+    let origin: { x: number; y: number } | null = null;
+    let dragged = false;
+
+    const finish = (): void => {
+      pending = null;
+      origin = null;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+
+    const onMove = (event: PointerEvent): void => {
+      if (!origin || !pending) return;
+      if (Math.hypot(event.clientX - origin.x, event.clientY - origin.y) < 5) return;
+      const from = { x: event.clientX, y: event.clientY };
+      const file = pending;
+      dragged = true;
+      finish();
+      void file
+        .then((path) => beginFileDrag([path], from))
+        .catch((error) => void this.reportError('The diagram could not be dragged out.', error));
+    };
+
+    const onUp = (): void => finish();
+
+    node.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      dragged = false;
+      origin = { x: event.clientX, y: event.clientY };
+      pending = this.prepareDragFile();
+      // A rejection here is reported only if a drag actually starts.
+      pending.catch(() => {});
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    });
+
+    // A drag must not also open the export sheet.
+    node.addEventListener(
+      'click',
+      (event) => {
+        if (!dragged) return;
+        dragged = false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true,
+    );
   }
 
   /**
@@ -1012,7 +1140,14 @@ export class FlowSharkApp {
       { id: 'file.exportPdf', title: 'Export as PDF…', run: () => this.quickExport('pdf') },
       {
         id: 'file.share',
+        title: 'Share…',
+        run: () => this.share(),
+        isEnabled: () => canShare(),
+      },
+      {
+        id: 'file.copyAsImage',
         title: 'Copy as Image',
+        accelerator: 'Cmd+Shift+C',
         run: () => this.copyAsImage(),
       },
       { id: 'file.print', title: 'Print…', accelerator: 'Cmd+P', run: () => this.print() },

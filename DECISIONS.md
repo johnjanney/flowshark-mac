@@ -29,11 +29,11 @@ including the ones that cost something — and **what would reverse it**.
 - [Connectors](#connectors)
   — [D-019](#d-019-floating-anchors-pick-a-declared-connection-point)
   · [D-020](#d-020-simple-orthogonal-routing-first)
-- [Export](#export)
+- [Export and system integration](#export-and-system-integration)
   — [D-016](#d-016-write-pdf-directly-with-a-raster-fallback)
+  · [D-009](#d-009-build-the-macos-integrations-directly-against-appkit)
 - [Scope deliberately left out](#scope-deliberately-left-out)
-  — [D-009](#d-009-defer-the-macos-integrations-that-need-objective-c)
-  · [D-010](#d-010-no-svg-import-yet)
+  — [D-010](#d-010-no-svg-import-yet)
   · [D-012](#d-012-layers-in-the-model-no-layers-panel)
   · [D-013](#d-013-no-updater-yet)
   · [D-025](#d-025-a-fixed-toolbar)
@@ -99,20 +99,33 @@ accessibility review; or an iPad version entering the roadmap. See
 **Context.** The brief uses `com.example.flowshark` as a placeholder and asks
 for the real reverse-domain identifier before Milestone 0 ends.
 
-**Decision.** Use `com.flowshark.app` for the bundle and
-`com.flowshark.document` for the exported UTI. The document type conforms to
-`public.data`, `public.content`, and `public.json`, and claims the `flowshark`
-extension and the `application/vnd.flowshark+json` MIME type.
+**Decision.** Use `io.github.johnjanney.flowshark` for the bundle and
+`io.github.johnjanney.flowshark.document` for the exported UTI. The document
+type conforms to `public.data`, `public.content`, and `public.json`, and claims
+the `flowshark` extension and the `application/vnd.flowshark+json` MIME type.
 
-**Consequences.** These strings appear in `src-tauri/tauri.conf.json`,
-`src-tauri/Info.plist`, and `src-tauri/Entitlements.plist`.
+**Reasoning.** A reverse-DNS identifier has to be derived from a domain the
+project actually controls, and the project has no product domain. It does
+control `johnjanney.github.io`, by virtue of owning the GitHub account, so
+`io.github.johnjanney` is a genuine claim rather than a guess. This is the same
+convention Flathub and other package systems use for projects hosted on GitHub
+without a domain of their own.
 
-**Open point.** `com.flowshark.app` assumes the project controls
-`flowshark.com`. **Confirm this before the first public release.** Changing the
-identifier afterwards means macOS treats the app as a different application:
-preferences are lost, and the Finder's document type registration has to be
-rebuilt. Changing the *UTI* afterwards additionally orphans the file
-association on machines that already saw the old one.
+An earlier draft used `com.flowshark.app`, which assumed control of
+`flowshark.com`. It did not, so that identifier was wrong and has been
+replaced.
+
+**Consequences.** These strings appear in `src-tauri/tauri.conf.json` and
+`src-tauri/Info.plist`. Changing the identifier later would mean macOS treats
+the app as a different application — preferences are lost and the Finder's
+document type registration has to be rebuilt — and changing the *UTI* later
+would additionally orphan the file association on machines that had already
+seen the old one. Settling it before the first release is what avoids both.
+
+**What would reverse it.** Registering a product domain. If that happens before
+the first public release, changing it is free; afterwards it is not, and it
+would be better to keep this identifier and simply use the new domain for the
+website.
 
 ### D-004: Developer ID and a DMG, with no App Sandbox
 
@@ -410,7 +423,7 @@ which is a self-contained addition behind the same interface.
 
 ---
 
-## Export
+## Export and system integration
 
 ### D-016: Write PDF directly, with a raster fallback
 
@@ -444,44 +457,67 @@ embedding a subset of the actual font, which needs a TrueType parser and a
 subsetting pass — a well-understood but substantial addition to the same
 writer.
 
----
-
-## Scope deliberately left out
-
-### D-009: Defer the macOS integrations that need Objective-C
+### D-009: Build the macOS integrations directly against AppKit
 
 **Context.** Several items in the brief need AppKit calls that Tauri does not
 expose: writing `com.adobe.pdf` and `public.svg-image` to `NSPasteboard`
-(§8.11), the system share sheet through `NSSharingServicePicker` (§8.11), a
-drag session that hands a file promise to the Finder (§8.11), and Quick Look
-preview and thumbnail extensions plus a Spotlight importer, which need
-separate Xcode targets inside the bundle (§8.17). The brief itself flags the
-last group as manual work and suggests treating it as post-MVP.
+(§8.11), the system share sheet through `NSSharingServicePicker` (§8.11), and a
+drag session that hands a real file to the Finder (§8.11).
 
-**Decision.** Ship 0.1.0 without them, and use only APIs that could be built
-and verified. What is implemented instead:
+**A wrong turn, recorded because it shaped the code.** The first version of
+this decision deferred all of it, on the grounds that the code compiles only on
+macOS and the automated development environment runs Linux, so it could not be
+compiled even once. That reasoning was wrong: `cargo check` does not link, so
+compiling for `aarch64-apple-darwin` from another platform needs only the
+target's standard library, not the Apple SDK. The one obstacle —
+`objc2-exception-helper` building a small Objective-C file in its build script
+— has a documented `DOCS_RS` escape hatch, and skipping it is safe when
+nothing is linked. What looked like a hard constraint was two commands.
 
-| Wanted | In 0.1.0 |
+**Decision.** Implement all three in `src-tauri/src/macos.rs`, using the same
+`objc2` and `objc2-app-kit` crates Tauri's own macOS backend already depends
+on, so they cost no extra compile time. Verify them with
+`npm run check:macos`, which is also a CI job.
+
+**What this gives:**
+
+| Wanted | Implemented as |
 |---|---|
-| Multi-type pasteboard | `public.png` and `public.utf8-plain-text`, through the Tauri clipboard plugin — both real macOS pasteboard types that Keynote, Pages, and Mail read |
-| Share sheet | **File > Copy as Image**, and the exported file is revealed in the Finder |
-| Drag out to the Finder | Export, which reveals the file ready to drag |
-| Print, with Save as PDF | Implemented — the standard macOS Print panel |
-| Quick Look, Spotlight | Not present |
+| Multi-type pasteboard | One `NSPasteboardItem` carrying `com.adobe.pdf`, `public.png`, `public.svg-image`, and `public.utf8-plain-text`. Keynote and Pages take the vector PDF, a browser takes the SVG, Mail takes the PNG, and a text editor gets a readable outline of the diagram. |
+| Share sheet | `NSSharingServicePicker`, anchored under the Share command, sharing a PNG of the diagram or the selection. |
+| Drag out to the Finder | `beginDraggingSessionWithItems:event:source:` from the Export toolbar button, dragging a PDF with the file's own Finder icon. |
 
-**Why, specifically.** These need a Rust module using `objc2` to call AppKit.
-That code compiles only on macOS, and this project was developed on Linux,
-where `cargo check` skips macOS-only dependencies entirely. Writing an
-Objective-C bridge that could not be compiled even once would mean shipping a
-repository whose first `npm run tauri:build` on a Mac fails — a worse outcome
-than a documented gap. Everything that *is* here compiles, and CI compiles it
-on a macOS runner on every push.
+**Consequences and the care they needed.**
 
-**What would reverse it.** A macOS build host, which CI already provides. The
-work is well-defined: one Rust module with `NSPasteboard` writes for the extra
-types and an `NSSharingServicePicker` presentation, plus an
-`NSFilePromiseProvider` for drag-out. Quick Look and Spotlight are a separate,
-larger job because Tauri does not create Xcode app-extension targets.
+- *Threading.* AppKit is main-thread-only and Tauri commands are not. Every
+  call goes through a helper that runs the work inline when it is already on
+  the main thread and posts it to the event loop otherwise — never blocking the
+  main thread waiting on itself.
+- *Lifetime.* Neither `NSSharingServicePicker` nor a dragging source is
+  retained by AppKit, and both outlive the call that creates them. Both are
+  held in Tauri managed state until they are replaced.
+- *Dragging is the fragile one.* macOS starts a drag session only while it is
+  handling a mouse event. The file is therefore written on `pointerdown`, so it
+  is ready by the time the pointer has moved far enough to begin the drag, and
+  the Rust side falls back to synthesising a matching event when
+  `NSApp.currentEvent` is not a mouse event. PDF rather than PNG is dragged
+  because it exports in a few milliseconds rather than a hundred.
+- *Verified, but not exercised.* The code type-checks against the real Apple
+  frameworks. It has not been run on macOS. Compiling is not the same as
+  working, and dragging out is the one most likely to need adjustment on
+  hardware.
+
+**Still deferred.** Quick Look preview and thumbnail extensions, and a
+Spotlight importer, need separate Xcode app-extension targets inside the
+bundle. Tauri does not create those, and the brief itself suggests treating
+them as post-MVP.
+
+**The lesson worth keeping.** "The build environment cannot do this" deserves
+one experiment before it becomes a decision.
+
+---
+
+## Scope deliberately left out
 
 ### D-010: No SVG import yet
 
@@ -633,9 +669,9 @@ are a single transform and cost nothing; a drag transforms the affected nodes
 and re-routes only the connectors attached to them; save and open are
 comfortably within "fast" at both sizes.
 
-**These numbers are not the gate.** They were taken in Chromium on a Linux CI
-machine, not in WKWebView on Apple Silicon, and they measure scene construction
-rather than sustained frame rate. **Gate 1 must be re-run on Apple Silicon
+**These numbers are not the gate.** They were taken in headless Chromium in the
+automated build environment, not in WKWebView on Apple Silicon, and they measure
+scene construction rather than sustained frame rate. **Gate 1 must be re-run on Apple Silicon
 hardware, on battery as well as mains, before the technology decision is
 closed** (§8.15). What to measure: sustained frames per second while dragging a
 selection in a 2,000-object document at 100% and at 50% zoom; the same on a
@@ -678,7 +714,7 @@ own:
 
 | Question | Status |
 |---|---|
-| Bundle identifier | `com.flowshark.app` chosen; confirm the domain is controlled (D-003) |
+| Bundle identifier | Settled: `io.github.johnjanney.flowshark` (D-003) |
 | Product name | Kept; a trademark search is outstanding (D-018) |
 | Gate 1, on Apple Silicon | Must be re-run on real hardware |
 | Gate 2, with VoiceOver | Must be run on real hardware |

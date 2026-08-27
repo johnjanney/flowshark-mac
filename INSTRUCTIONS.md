@@ -520,13 +520,32 @@ bottom-left corner. Only the diagram is printed, not the FlowShark interface.
 
 ### Copying to other applications
 
-**File > Copy as Image** puts a PNG of the diagram, or of the selection, on the
-pasteboard, ready to paste into Keynote, Pages, Mail, or a message.
+**File > Copy as Image** (`⇧⌘C`) copies the diagram, or the selection, in four
+forms at once. Each application then takes the one it handles best:
 
-`⌘C` copies elements *within* FlowShark, including between windows.
+| You paste into | You get |
+|---|---|
+| Keynote, Pages, Numbers | Vector PDF, which stays sharp at any size |
+| Mail, Messages, Notes | A PNG image |
+| A browser or design tool | SVG |
+| A text editor | A written outline of the diagram |
 
-> Copying as PDF or SVG, the system share sheet, and dragging a diagram
-> straight out of the canvas into another application are not in this release.
+`⌘C` is different: it copies FlowShark *elements*, so you can paste them into
+another FlowShark window and keep editing them.
+
+### Sharing
+
+**File > Share…** opens the system share sheet with a picture of the diagram —
+AirDrop, Mail, Messages, Notes, and anything else you have installed.
+
+### Dragging a diagram out
+
+Press and hold the **Export** button in the toolbar, then drag. A PDF of the
+diagram follows the pointer, and you can drop it into a Finder window, onto the
+Desktop, into a Mail message, or straight onto a Keynote slide. Clicking the
+button as usual still opens the export sheet.
+
+If something is selected, only the selection is dragged out.
 
 ---
 
@@ -607,6 +626,7 @@ accessible label.
 | Save | `⌘S` |
 | Save As | `⇧⌘S` |
 | Export | `⇧⌘E` |
+| Copy as Image | `⇧⌘C` |
 | Print | `⌘P` |
 
 ### Edit

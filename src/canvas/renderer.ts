@@ -18,7 +18,6 @@ import { isConnector, isGroup, isShape } from '../model/types';
 import {
   boundsOf,
   connectorsAttachedTo,
-  descendantsOf,
   elementBounds,
   expandSelection,
   rootOf,
@@ -27,6 +26,7 @@ import {
 } from '../model/document';
 import { connectionPointsFor, getShapeDefinition } from '../shapes/library';
 import { buildScene, type SceneTheme } from './scene';
+import { describeShape } from '../io/describe';
 import { clear, el, svg } from '../util/dom';
 import type { Guide, Store } from '../state/store';
 
@@ -706,49 +706,16 @@ export class CanvasRenderer {
    * A VoiceOver-readable mirror of the diagram.
    *
    * A canvas has no accessible structure, so the brief calls for a parallel
-   * object list. Each entry names the element and, for shapes, the connections
-   * that leave it — "Process, Approve invoice, connects to Decision, Approved?"
+   * object list. The wording comes from `src/io/describe.ts`, the same source
+   * the SVG export and the pasteboard use, so the three never disagree.
    */
   renderOutline(): void {
     const doc = this.store.document;
     const outline = this.dom.outline;
     clear(outline);
 
-    const describe = (id: ElementId): string => {
-      const element = doc.elements[id];
-      if (!element) return 'Unknown element';
-      if (isShape(element)) {
-        const definition = getShapeDefinition(element.shape);
-        const text = element.text.value.trim().replace(/\s+/g, ' ');
-        return element.altText || (text ? `${definition.name}, ${text}` : definition.name);
-      }
-      if (isConnector(element)) {
-        const labels = element.labels.map((label) => label.text.trim()).filter(Boolean);
-        return labels.length > 0 ? `Connector labelled ${labels.join(', ')}` : 'Connector';
-      }
-      return `Group of ${descendantsOf(doc, id).length} elements`;
-    };
-
     for (const element of visibleElements(doc)) {
       if (!isShape(element)) continue;
-      const outgoing = Object.values(doc.elements)
-        .filter(isConnector)
-        .filter((connector) => connector.source.elementId === element.id)
-        .map((connector) => {
-          const targetId = connector.target.elementId;
-          const label = connector.labels
-            .map((entry) => entry.text.trim())
-            .filter(Boolean)
-            .join(', ');
-          const target = targetId ? describe(targetId) : 'a point on the canvas';
-          return label ? `${label} to ${target}` : `to ${target}`;
-        });
-
-      const description =
-        outgoing.length > 0
-          ? `${describe(element.id)}. Connects ${outgoing.join('; ')}.`
-          : `${describe(element.id)}.`;
-
       outline.append(
         el(
           'div',
@@ -758,7 +725,7 @@ export class CanvasRenderer {
             'data-id': element.id,
             'aria-selected': this.store.selection.includes(element.id) ? 'true' : 'false',
           },
-          [description],
+          [describeShape(doc, element.id)],
         ),
       );
     }

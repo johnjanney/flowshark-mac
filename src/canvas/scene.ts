@@ -16,7 +16,6 @@ import type { Rect } from '../model/geometry';
 import { rectCenter, round, unionRects } from '../model/geometry';
 import type {
   ConnectorElement,
-  DiagramElement,
   ElementId,
   FlowsharkDocument,
   ShapeElement,
@@ -28,6 +27,7 @@ import { getShapeDefinition, textBoxFor } from '../shapes/library';
 import { collectMarkers, markerId, markerMarkup } from '../connectors/markers';
 import { layoutText, positionLines } from '../text/layout';
 import { elementBounds, routeOf, visibleElements } from '../model/document';
+import { describeElement } from '../io/describe';
 import {
   pointAlongPolyline,
   tangentAlongPolyline,
@@ -134,13 +134,6 @@ function textMarkup(
   );
 }
 
-function shapeAccessibleName(element: ShapeElement): string {
-  if (element.altText) return element.altText;
-  const definition = getShapeDefinition(element.shape);
-  const text = element.text.value.trim().replace(/\s+/g, ' ');
-  return text ? `${definition.name}: ${text}` : definition.name;
-}
-
 function connectorAccessibleName(
   connector: ConnectorElement,
   doc: FlowsharkDocument,
@@ -150,13 +143,11 @@ function connectorAccessibleName(
     ? doc.elements[connector.source.elementId]
     : undefined;
   const to = connector.target.elementId ? doc.elements[connector.target.elementId] : undefined;
-  const name = (element: DiagramElement | undefined): string =>
-    isShape(element) ? shapeAccessibleName(element) : 'a point on the canvas';
   const labels = connector.labels
     .map((label) => label.text.trim())
     .filter(Boolean)
     .join(', ');
-  const base = `Connector from ${name(from)} to ${name(to)}`;
+  const base = `Connector from ${describeElement(doc, from)} to ${describeElement(doc, to)}`;
   return labels ? `${base}, labelled ${labels}` : base;
 }
 
@@ -249,13 +240,13 @@ function shapeMarkup(
     options.interactive ? `data-id="${escapeXml(element.id)}" data-kind="shape"` : '',
     `transform="${transformFor(element)}"`,
     opacityAttr('opacity', style.opacity).trim(),
-    options.accessible ? `role="img" aria-label="${escapeXml(shapeAccessibleName(element))}"` : '',
+    options.accessible ? `role="img" aria-label="${escapeXml(describeElement(doc, element))}"` : '',
   ]
     .filter(Boolean)
     .join(' ');
 
   const title = options.accessible
-    ? `<title>${escapeXml(shapeAccessibleName(element))}</title>`
+    ? `<title>${escapeXml(describeElement(doc, element))}</title>`
     : '';
 
   return `<g ${attributes}>${title}${parts.join('')}</g>`;

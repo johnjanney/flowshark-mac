@@ -12,6 +12,8 @@
 //!    asked the app to open.
 
 mod files;
+#[cfg(target_os = "macos")]
+mod macos;
 mod windows;
 
 use std::sync::Mutex;
@@ -25,7 +27,8 @@ pub const OPEN_FILE_EVENT: &str = "flowshark://open-file";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -37,9 +40,24 @@ pub fn run() {
             files::save_binary_atomic,
             files::read_binary_file,
             files::file_modified_at,
+            files::write_temp_file,
             windows::open_new_window,
             windows::take_pending_open_file,
+            #[cfg(target_os = "macos")]
+            macos::copy_diagram_to_pasteboard,
+            #[cfg(target_os = "macos")]
+            macos::share_files,
+            #[cfg(target_os = "macos")]
+            macos::begin_file_drag,
         ]);
+
+    // State the macOS integrations need to keep alive across a command call.
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .manage(macos::SharePicker::default())
+            .manage(macos::DragState::default());
+    }
 
     builder
         .build(tauri::generate_context!())

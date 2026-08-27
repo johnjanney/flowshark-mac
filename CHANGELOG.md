@@ -95,13 +95,9 @@ Nothing yet.
 These are known and deliberate, not defects. Each is explained in
 [DECISIONS.md](DECISIONS.md).
 
-- Copying to the pasteboard covers PNG and plain text. The `com.adobe.pdf` and
-  `public.svg-image` pasteboard types, the system share sheet, and dragging a
-  diagram out of the canvas into the Finder or Keynote all need Objective-C
-  bridging that has not been written yet (D-009).
 - No Quick Look preview or thumbnail extension for `.flowshark` files, and no
-  Spotlight importer. These need separate Xcode targets inside the bundle
-  (D-009).
+  Spotlight importer. These need separate Xcode app-extension targets inside
+  the bundle, which Tauri does not create (D-009).
 - No SVG import (D-010).
 - Layers exist in the document model, and documents round-trip them, but there
   is no layers panel and every new element goes on one layer (D-012).
@@ -228,8 +224,14 @@ covers everything in the MVP scope of the project brief.
   transparency, an optional grid, and 1x, 2x, or 3x resolution.
 - Self-contained SVG with no scripts and no external references.
 - Printing through the standard macOS Print panel, which offers Save as PDF.
-- Copy as Image, which puts a PNG on the pasteboard for Keynote, Pages, and
-  Mail.
+- Copy as Image (`⇧⌘C`), which writes one pasteboard item carrying
+  `com.adobe.pdf`, `public.png`, `public.svg-image`, and
+  `public.utf8-plain-text`, so Keynote and Pages take the vector PDF, a browser
+  takes the SVG, Mail takes the PNG, and a text editor gets a readable outline
+  of the diagram.
+- Share, through the system share sheet.
+- Dragging the diagram out of the window into the Finder, Mail, or Keynote by
+  dragging from the Export button in the toolbar.
 - Exports are drawn from the same geometry as the screen, so what you see is
   what you get.
 
@@ -247,7 +249,7 @@ covers everything in the MVP scope of the project brief.
   Full Screen, and window management.
 - Apple-standard keyboard shortcuts throughout, and a shortcut reference in
   Help.
-- Standard Open and Save panels.
+- Standard Open and Save panels, and the system share sheet.
 - Light and dark appearance, following the system and switching live, with a
   manual override in Settings.
 - Support for Increase Contrast, Reduce Motion, and system text size. The
