@@ -1,0 +1,178 @@
+import { describe, expect, it } from 'vitest';
+import { getTemplate } from '../src/templates';
+import { buildStandaloneSvg } from '../src/io/export-svg';
+import { defaultExportOptions, exportRegion } from '../src/io/export';
+import { exportVectorPdf } from '../src/io/export-pdf';
+import { isWinAnsiSafe, pdfColor, pdfString } from '../src/io/pdf-writer';
+import { parsePath } from '../src/io/svg-path';
+import { escapeXml } from '../src/canvas/scene';
+import { createEmptyDocument, createShapeElement } from '../src/model/defaults';
+import { addElement } from '../src/model/document';
+
+const decoder = new TextDecoder('latin1');
+
+describe('SVG export', () => {
+  it('produces a standalone document with a viewBox', () => {
+    const doc = getTemplate('basic-flowchart')!.build();
+    const { svg, region } = buildStandaloneSvg(doc, defaultExportOptions(), []);
+    expect(svg.startsWith('<?xml')).toBe(true);
+    expect(svg).toContain('xmlns="http://www.w3.org/2000/svg"');
+    expect(svg).toContain(`viewBox="${region.x} ${region.y} ${region.width} ${region.height}"`);
+    expect(svg.trimEnd().endsWith('</svg>')).toBe(true);
+  });
+
+  it('contains no script or event handlers', () => {
+    const doc = getTemplate('software-logic')!.build();
+    const { svg } = buildStandaloneSvg(doc, defaultExportOptions(), []);
+    expect(svg).not.toMatch(/<script/i);
+    expect(svg).not.toMatch(/\son[a-z]+=/i);
+    expect(svg).not.toContain('javascript:');
+  });
+
+  it('omits the background when transparency is requested', () => {
+    const doc = getTemplate('basic-flowchart')!.build();
+    const opaque = buildStandaloneSvg(doc, defaultExportOptions(), []).svg;
+    const transparent = buildStandaloneSvg(
+      doc,
+      { ...defaultExportOptions(), transparent: true },
+      [],
+    ).svg;
+    expect(opaque).toContain('fill="#ffffff"');
+    expect(transparent.length).toBeLessThan(opaque.length);
+  });
+
+  it('exports only the selection when asked', () => {
+    const doc = getTemplate('basic-flowchart')!.build();
+    const one = doc.order[0];
+    const all = buildStandaloneSvg(doc, defaultExportOptions(), []).svg;
+    const some = buildStandaloneSvg(
+      doc,
+      { ...defaultExportOptions(), scope: 'selection' },
+      [one],
+    ).svg;
+    expect(some.length).toBeLessThan(all.length);
+  });
+
+  it('escapes user text so it cannot inject markup', () => {
+    const doc = createEmptyDocument();
+    addElement(
+      doc,
+      createShapeElement({
+        shape: 'process',
+        frame: { x: 0, y: 0, width: 100, height: 60 },
+        text: '</text><script>alert(1)</script>',
+      }),
+    );
+    const { svg } = buildStandaloneSvg(doc, defaultExportOptions(), []);
+    expect(svg).not.toContain('<script>');
+    expect(svg).toContain('&lt;script&gt;');
+  });
+
+  it('escapes the five XML metacharacters', () => {
+    expect(escapeXml(`<&>"'`)).toBe('&lt;&amp;&gt;&quot;&apos;');
+  });
+
+  it('adds the requested margin to the region', () => {
+    const doc = getTemplate('basic-flowchart')!.build();
+    const tight = exportRegion(doc, { ...defaultExportOptions(), margin: 10 }, []);
+    const loose = exportRegion(doc, { ...defaultExportOptions(), margin: 50 }, []);
+    expect(loose.width).toBeCloseTo(tight.width + 80, 4);
+    expect(loose.height).toBeCloseTo(tight.height + 80, 4);
+  });
+});
+
+describe('PDF export', () => {
+  it('writes a well-formed PDF', () => {
+    const doc = getTemplate('process-map')!.build();
+    const bytes = exportVectorPdf(doc, defaultExportOptions(), []);
+    const text = decoder.decode(bytes);
+    expect(text.startsWith('%PDF-1.7')).toBe(true);
+    expect(text.trimEnd().endsWith('%%EOF')).toBe(true);
+    expect(text).toContain('/Type /Catalog');
+    expect(text).toContain('/Type /Pages');
+    expect(text).toContain('/Type /Page');
+    expect(text).toContain('startxref');
+  });
+
+  it('records cross-reference offsets that point at real objects', () => {
+    const doc = getTemplate('basic-flowchart')!.build();
+    const bytes = exportVectorPdf(doc, defaultExportOptions(), []);
+    const text = decoder.decode(bytes);
+    const xrefIndex = text.lastIndexOf('\nxref\n') + 1;
+    const startxref = Number(/startxref\s+(\d+)/.exec(text)![1]);
+    expect(startxref).toBe(xrefIndex);
+
+    const entries = text
+      .slice(xrefIndex)
+      .split('\n')
+      .filter((line) => /^\d{10} \d{5} n $/.test(line));
+    expect(entries.length).toBeGreaterThan(3);
+    for (const [index, entry] of entries.entries()) {
+      const offset = Number(entry.slice(0, 10));
+      expect(text.slice(offset)).toMatch(new RegExp(`^${index + 1} 0 obj`));
+    }
+  });
+
+  it('sizes the page to the export region', () => {
+    const doc = getTemplate('basic-flowchart')!.build();
+    const options = defaultExportOptions();
+    const region = exportRegion(doc, options, []);
+    const text = decoder.decode(exportVectorPdf(doc, options, []));
+    const media = /\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/.exec(text)!;
+    expect(Number(media[1])).toBeCloseTo(region.width, 1);
+    expect(Number(media[2])).toBeCloseTo(region.height, 1);
+  });
+
+  it('embeds text as selectable content', () => {
+    const doc = getTemplate('basic-flowchart')!.build();
+    const text = decoder.decode(exportVectorPdf(doc, defaultExportOptions(), []));
+    expect(text).toContain('/Type /Font');
+    expect(text).toContain('/WinAnsiEncoding');
+    expect(text).toContain('(Start) Tj');
+  });
+});
+
+describe('PDF primitives', () => {
+  it('escapes PDF string delimiters', () => {
+    expect(pdfString('a(b)c\\d')).toBe('(a\\(b\\)c\\\\d)');
+  });
+
+  it('maps common punctuation into WinAnsi', () => {
+    expect(isWinAnsiSafe('Café — "quoted"')).toBe(true);
+    expect(isWinAnsiSafe('你好')).toBe(false);
+  });
+
+  it('parses hex colours', () => {
+    expect(pdfColor('#ffffff')).toEqual([1, 1, 1]);
+    expect(pdfColor('#000')).toEqual([0, 0, 0]);
+    const [r, g, b] = pdfColor('#336699');
+    expect(r).toBeCloseTo(0.2, 2);
+    expect(g).toBeCloseTo(0.4, 2);
+    expect(b).toBeCloseTo(0.6, 2);
+  });
+});
+
+describe('SVG path parsing', () => {
+  it('converts an arc to cubic segments that end at the right point', () => {
+    const segments = parsePath('M 0 10 A 10 10 0 0 1 20 10');
+    expect(segments[0].type).toBe('move');
+    const last = segments[segments.length - 1];
+    expect(last.type).toBe('cubic');
+    if (last.type !== 'cubic') return;
+    expect(last.to.x).toBeCloseTo(20, 3);
+    expect(last.to.y).toBeCloseTo(10, 3);
+  });
+
+  it('elevates a quadratic to a cubic', () => {
+    const segments = parsePath('M 0 0 Q 5 10 10 0');
+    expect(segments[1].type).toBe('cubic');
+  });
+
+  it('handles relative commands and implicit line-to repetition', () => {
+    const segments = parsePath('m 10 10 l 5 0 5 0 z');
+    expect(segments).toHaveLength(4);
+    const second = segments[2];
+    if (second.type !== 'line') throw new Error('expected a line');
+    expect(second.to).toEqual({ x: 20, y: 10 });
+  });
+});

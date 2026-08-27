@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+src-tauri/target/
+src-tauri/gen/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Logs
+npm-debug.log*
+yarn-error.log*
+*.log
+
+# Local secrets and signing material
+*.p12
+*.cer
+*.provisionprofile
+.env
+.env.local
