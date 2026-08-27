@@ -38,6 +38,11 @@ export.
 Every command in the toolbar and the inspector is also in the menu bar, so you
 never have to reach for the mouse to do something.
 
+FlowShark has no separate title bar: the toolbar is the title bar. Drag any
+empty part of that strip — beside the traffic lights, either side of the
+document name, or the name itself — to move the window. Double-click the same
+area to zoom the window, as you would any other Mac app.
+
 ### The four tools
 
 Switch tools from the toolbar or with `⌘1` to `⌘4`.

@@ -78,16 +78,14 @@ body {
   padding: 0 12px 0 var(--traffic-light-inset);
   background: var(--surface-panel);
   border-bottom: 1px solid var(--border-soft);
-  /* The unified title bar: this strip is the window's drag region. */
-  -webkit-app-region: drag;
+  /* The unified title bar. The drag behaviour lives on the element's
+     `data-tauri-drag-region` attribute, not here: `-webkit-app-region` is a
+     Chromium extension that WKWebView ignores, so it would silently do
+     nothing in the shipped app. */
 }
 
 body[data-platform='web'] .toolbar {
   padding-left: 12px;
-}
-
-.toolbar > * {
-  -webkit-app-region: no-drag;
 }
 
 .toolbar-group {

@@ -691,6 +691,64 @@ that a designer cannot open in a graphics application.
 **What would reverse it.** A designer joining the project. Replace the script's
 output with exported PNGs; nothing else changes.
 
+### D-026: Move the window with `data-tauri-drag-region`, not CSS
+
+**Context.** FlowShark uses `titleBarStyle: "Overlay"` with `hiddenTitle: true`
+so the toolbar *is* the title bar (§8.2). Something then has to tell the window
+that dragging that strip should move it. The first implementation used
+`-webkit-app-region: drag` on the toolbar and `no-drag` on its children.
+
+That was wrong, and shipped wrong. `-webkit-app-region` is a Chromium
+extension. It carries a `-webkit-` prefix, so it reads like a Safari property,
+but WebKit never implemented it — it exists because Electron needed it and
+Chromium added it. WKWebView parses the declaration and discards it. The result
+was a window with no system title bar and no drag region either: it could not
+be moved by its top edge at all. The browser smoke test could not catch this,
+because it runs in Chromium, where the property works.
+
+**Decision.** Use Tauri's mechanism. The toolbar carries
+`data-tauri-drag-region="deep"`, and `src-tauri/capabilities/default.json`
+grants `core:window:allow-start-dragging`.
+
+Tauri injects a document-level `mousedown` handler that walks the event's
+composed path looking for that attribute and then invokes
+`plugin:window|start_dragging`. `"deep"` means the whole subtree drags, which
+matters because the strip is nearly all children — button groups, two spacers,
+the document title. The walk stops at anything clickable (`<button>`, `<a>`,
+form controls, anything with a `tabindex` or an interactive ARIA role), so the
+toolbar's buttons keep working without being opted out one at a time. The same
+handler maps a double-click to `internal_toggle_maximize`, which `core:default`
+already grants, so zooming the window works too.
+
+**Consequences.** Adding an interactive control to the toolbar cannot
+accidentally break dragging, and adding a decorative one cannot accidentally
+swallow it. The cost is that the rule now lives in an HTML attribute rather
+than the stylesheet, which is a less obvious place to look — hence the comment
+in `index.html` and the one left behind in `app.css` explaining why the CSS
+property is not there.
+
+`tests/titlebar.test.ts` ports the attribute walk from the pinned Tauri
+version and asserts the outcomes that matter: the strip, its spacers and its
+title drag the window; every toolbar button and every icon inside one does not;
+the capability is granted; and no stylesheet declares `app-region` again. The
+port is a copy, so a Tauri upgrade that changes those rules should update it —
+that is the intended trigger to re-read the injected script.
+
+**What would reverse it.** Restoring a real system title bar, which would make
+the whole question moot. Short of that, nothing: this is Tauri's supported
+mechanism.
+
+**The general lesson.** This is the same failure as D-009 in a different
+costume, and the second time in this project: a vendor-prefixed property, a
+`window.print()` call, a `/opt` path — each looked right, none was tested
+against the environment that would actually run it. The pattern is assuming
+that because something is standard *somewhere*, it is standard *here*.
+WKWebView is not Chromium, and a smoke test in Chromium is evidence about
+Chromium. Where a feature depends on the shell, the check belongs against the
+shell's own documentation or source — reading Tauri's `drag.js` is what
+settled this one, and reading its permission tables is what showed
+`allow-start-dragging` was missing from the default set.
+
 ---
 
 ## Milestone 0 gates

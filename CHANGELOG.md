@@ -88,7 +88,15 @@ changes, and it goes up by one when it does.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- The window can be moved again. FlowShark hides the system title bar and uses
+  the toolbar in its place, but the strip was marked draggable with
+  `-webkit-app-region`, a Chromium property that WKWebView ignores — so the
+  window had no drag region at all and could not be picked up by its top edge.
+  The toolbar now carries `data-tauri-drag-region`, and the capability file
+  grants `core:window:allow-start-dragging`, which the drag handler needs.
+  Double-clicking the strip zooms the window, as it should. (D-026)
 
 ### Known gaps
 

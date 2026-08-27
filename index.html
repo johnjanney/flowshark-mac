@@ -17,7 +17,13 @@
     <div id="fallback-menubar" class="fallback-menubar" hidden></div>
 
     <div class="app" id="app">
-      <header class="toolbar" id="toolbar" role="toolbar" aria-label="FlowShark toolbar"></header>
+      <!-- `data-tauri-drag-region="deep"` makes this whole strip the window's
+           title bar: the window follows a drag anywhere in the subtree. Tauri's
+           injected handler stops at buttons, links, inputs and anything with a
+           tabindex or an interactive role, so the controls stay clickable
+           without needing to opt out one by one. -->
+      <header class="toolbar" id="toolbar" role="toolbar" aria-label="FlowShark toolbar"
+              data-tauri-drag-region="deep"></header>
 
       <div class="workspace">
         <aside class="sidebar" id="sidebar" aria-label="Shape library"></aside>
