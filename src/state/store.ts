@@ -317,6 +317,19 @@ export class Store {
     this.markChanged('file');
   }
 
+  /**
+   * Replace the remembered documents wholesale.
+   *
+   * Used at start-up on macOS, where the authoritative list lives in the
+   * native layer: it is the record of which files the user actually chose, and
+   * only those can be reopened without choosing again.
+   */
+  setRecentFiles(paths: readonly string[]): void {
+    this.state.file.recent = paths.slice(0, MAX_RECENT);
+    writeJson(RECENT_KEY, { list: this.state.file.recent });
+    this.markChanged('file');
+  }
+
   clearRecentFiles(): void {
     this.state.file.recent = [];
     writeJson(RECENT_KEY, { list: [] });

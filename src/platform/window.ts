@@ -7,6 +7,7 @@
  */
 
 import { isNative } from './environment';
+import type { FileHandle } from './files';
 
 export async function setWindowTitle(title: string): Promise<void> {
   if (!isNative()) {
@@ -67,22 +68,24 @@ export async function printWindow(): Promise<void> {
  * onto the Dock icon, or Open With.
  */
 export async function onOpenFileRequest(
-  handler: (path: string) => void,
+  handler: (handle: FileHandle) => void,
 ): Promise<() => void> {
   if (!isNative()) return () => {};
   const { listen } = await import('@tauri-apps/api/event');
-  const unlisten = await listen<string>('flowshark://open-file', (event) => {
-    if (typeof event.payload === 'string') handler(event.payload);
+  // The payload carries permission as well as a path: the Finder chose the
+  // file, so Rust granted it before telling us about it.
+  const unlisten = await listen<FileHandle>('flowshark://open-file', (event) => {
+    if (event.payload?.token) handler(event.payload);
   });
   return unlisten;
 }
 
 /** Ask the shell for any file the app was launched with. */
-export async function pendingLaunchFile(): Promise<string | null> {
+export async function pendingLaunchFile(): Promise<FileHandle | null> {
   if (!isNative()) return null;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    return await invoke<string | null>('take_pending_open_file');
+    return await invoke<FileHandle | null>('take_pending_open_file');
   } catch {
     return null;
   }

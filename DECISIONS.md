@@ -183,6 +183,60 @@ carries a comment saying exactly this.
 
 ---
 
+### D-027: File access by capability, not by pathname
+
+**Context.** The Rust shell exposed a handful of commands — read a document,
+write a document, write an export, fingerprint a file — and every one took a
+pathname from the web layer. The web layer got that pathname by presenting the
+Open or Save panel itself. Nothing on the Rust side checked where it came from,
+so a pathname the user chose and a pathname a script made up were
+indistinguishable. Because the app is deliberately not sandboxed (D-004), that
+meant any code running in the web view could read or write anywhere the user
+could.
+
+That was tolerable only for as long as nothing could run in the web view.
+A document could inject a live event handler into the canvas until this was
+fixed, which is the case the design should have assumed all along.
+
+**Decision.** The panels are presented from Rust, and what crosses the boundary
+is a capability rather than a pathname. `src-tauri/src/grants.rs` issues an
+opaque token for a file the user chose, recording whether it may be read,
+written, or both, and whether it survives one use or the session. Every file
+command takes a token. The pathname still travels back for the title bar and
+the recent-documents menu, because showing a path the user just chose grants
+nothing.
+
+Grants are created at exactly three points, and all three are the user acting:
+choosing a file in a panel, opening a document from the Finder or dropping one
+on the window, and re-opening from the recent-documents menu.
+
+**Consequences.** Two things had to move to the Rust side to keep that true.
+Drops are handled there, because Tauri's own drag-drop event hands the web view
+the dropped pathnames. And the list of documents the user has chosen is kept
+and persisted there, because "the user picked this once" is precisely the claim
+the web layer must not be able to make for itself; the menu in the web layer is
+seeded from it at start-up.
+
+The capability file is shorter as a result: `dialog:allow-open`,
+`dialog:allow-save` and `opener:allow-reveal-item-in-dir` are gone, because the
+web layer no longer does any of those things.
+
+A renderer compromise now reaches the files the user opened in that window,
+rather than the whole file system. That is a smaller blast radius, not none.
+
+**What this does not do.** It does not verify that a token corresponds to a
+real `NSOpenPanel` result — it verifies that this process issued the token for
+a path a user action produced, which is the same guarantee reached a different
+way. And it is not the sandbox: without the App Sandbox entitlement, a
+compromise that escapes the web view entirely is unaffected by any of this.
+
+**What would reverse it.** Adopting the App Sandbox (see D-004), which enforces
+the same property in the kernel and makes the grant table redundant for
+user-selected files — though the security-scoped bookmarks it needs for Open
+Recent are close to what `grants.rs` already keeps.
+
+---
+
 ## Rendering and architecture
 
 ### D-005: Render with SVG, not a 2D canvas

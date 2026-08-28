@@ -151,6 +151,12 @@ Two rules hold the design together:
 application. If the app is ever rewritten in Swift, that directory marks the
 boundary of the work.
 
+Nothing in `src/` can name a file. The Open and Save panels are presented from
+Rust, and the front end holds an opaque token for the file the user chose —
+never a pathname it could have invented. `src-tauri/src/grants.rs` explains
+why, and [D-027](DECISIONS.md#d-027-file-access-by-capability-not-by-pathname)
+records the decision.
+
 ### The document format
 
 A `.flowshark` file is JSON with an integer `schemaVersion`. Older documents
@@ -194,8 +200,12 @@ The application version and the document schema version are independent. See
   screenshots.
 - **Rust tests** (`cd src-tauri && cargo test`) cover the atomic save, the
   uniqueness of the temporary name two overlapping saves would otherwise
-  share, the file fingerprint used to notice external changes, and the
-  temporary-file path used by Share and drag-out.
+  share, the file fingerprint used to notice external changes, the
+  temporary-file path used by Share and drag-out, and the capability grants
+  that stand between the front end and the file system — that a token opens
+  only what it was issued for, that read and write are separate, that a
+  single-use grant cannot be replayed, and that the recent-documents menu
+  cannot name a file the user never chose.
 - **A macOS cross-check** (`npm run check:macos`) compiles
   `src-tauri/src/macos.rs` against the `aarch64-apple-darwin` target. That code
   is behind `#[cfg(target_os = "macos")]`, so an ordinary `cargo check` on
