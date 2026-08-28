@@ -347,3 +347,11 @@ stashing each source change in turn and re-running:
 3. A **fuzz corpus for `parseDocument`**. The normaliser is careful and the new
    tests probe it deliberately, but generated input would cover more of it than
    hand-written cases.
+4. **One open Dependabot alert** (moderate) on the default branch, surfaced by
+   the push at the end of this session. `npm audit` reports zero
+   vulnerabilities, so it is almost certainly a Cargo advisory somewhere in the
+   transitive GTK/WebKit dependency tree that Tauri pulls in. I could not
+   enumerate it from this session — there is no Dependabot tool available here
+   — so it is unread rather than assessed. It is worth opening
+   `/security/dependabot` and checking whether it reaches any code that
+   actually ships in the macOS bundle.
