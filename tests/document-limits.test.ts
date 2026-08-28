@@ -15,9 +15,27 @@ import {
   fromRaw,
 } from '../src/model/serialization';
 import { detectImageType } from '../src/io/import';
+import { inspectImage } from '../src/util/image';
 
 const PNG_4x4 =
   'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR42mO4Y2PzHxkzkC4AAO2YJTHTor4nAAAAAElFTkSuQmCC';
+
+/** A PNG signature and IHDR declaring `width` x `height`, base64 encoded. */
+function pngHeader(width: number, height: number): string {
+  const bytes = new Uint8Array(24);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  bytes.set([0, 0, 0, 13], 8);
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12);
+  const write = (value: number, at: number): void => {
+    bytes[at] = (value >>> 24) & 0xff;
+    bytes[at + 1] = (value >>> 16) & 0xff;
+    bytes[at + 2] = (value >>> 8) & 0xff;
+    bytes[at + 3] = value & 0xff;
+  };
+  write(width, 16);
+  write(height, 20);
+  return btoa(String.fromCharCode(...bytes));
+}
 
 function shape(id: string, extra: Record<string, unknown> = {}) {
   return {
@@ -39,6 +57,21 @@ function documentWith(raw: Record<string, unknown>) {
 }
 
 describe('structural budgets', () => {
+  it('refuses a document with more elements than the budget allows', () => {
+    // The headline budget: without it the reader builds the whole object
+    // graph, and every element then becomes markup, a snapshot and a copy.
+    const elements: Record<string, unknown> = {};
+    for (let i = 0; i <= DOCUMENT_LIMITS.elements; i++) elements[`e${i}`] = shape(`e${i}`);
+    expect(() => documentWith({ elements })).toThrow(DocumentFormatError);
+  });
+
+  it('refuses a document whose drawing order is absurdly long', () => {
+    // The order list is read and filtered before it is bounded by the element
+    // count, so it needs a budget of its own.
+    const order = Array.from({ length: DOCUMENT_LIMITS.order + 1 }, (_, i) => `e${i}`);
+    expect(() => documentWith({ elements: {}, order })).toThrow(DocumentFormatError);
+  });
+
   it('refuses a document with too many layers', () => {
     const layers = Array.from({ length: DOCUMENT_LIMITS.layers + 1 }, (_, i) => ({
       id: `l${i}`,
@@ -187,20 +220,58 @@ describe('embedded image budgets', () => {
     expect(() => documentWith({ images })).toThrow(DocumentFormatError);
   });
 
-  it('refuses an image whose declared pixel count is absurd', () => {
+  it('refuses an image whose own header declares an absurd pixel count', () => {
+    expect(() =>
+      documentWith({
+        images: {
+          big: { id: 'big', mimeType: 'image/png', data: pngHeader(30_000, 30_000) },
+        },
+      }),
+    ).toThrow(DocumentFormatError);
+  });
+
+  it('is not fooled by a document that understates a huge payload', () => {
+    // `width` and `height` are separate fields from the payload, so a hostile
+    // document can claim a picture is tiny. The renderer decodes the payload,
+    // not the claim, so the budget has to follow the payload too.
     expect(() =>
       documentWith({
         images: {
           big: {
             id: 'big',
             mimeType: 'image/png',
-            data: PNG_4x4,
-            width: 500_000,
-            height: 500_000,
+            data: pngHeader(30_000, 30_000),
+            width: 1,
+            height: 1,
           },
         },
       }),
     ).toThrow(DocumentFormatError);
+  });
+
+  it('records the size the payload really is, not the size it was told', () => {
+    const doc = documentWith({
+      images: {
+        small: {
+          id: 'small',
+          mimeType: 'image/png',
+          data: PNG_4x4,
+          width: 500_000,
+          height: 500_000,
+        },
+      },
+    });
+    expect(doc.images.small.width).toBe(4);
+    expect(doc.images.small.height).toBe(4);
+  });
+
+  it('drops a payload whose header is truncated rather than assuming it small', () => {
+    // "Cannot tell" and "is small" must not be the same answer, or the budget
+    // is bypassed by cutting the header off.
+    const doc = documentWith({
+      images: { cut: { id: 'cut', mimeType: 'image/png', data: PNG_4x4.slice(0, 8) } },
+    });
+    expect(doc.images).toEqual({});
   });
 
   it('measures a payload without decoding it', () => {
@@ -217,35 +288,76 @@ describe('embedded image budgets', () => {
 });
 
 describe('what an image actually is', () => {
-  it('identifies the formats FlowShark draws from their signatures', () => {
+  /** A minimal JPEG: SOI, an APP0 block, then the frame header. */
+  function jpeg(width: number, height: number): Uint8Array {
+    const bytes = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10];
+    for (let i = 0; i < 14; i++) bytes.push(0);
+    bytes.push(0xff, 0xc0, 0x00, 0x11, 0x08);
+    bytes.push((height >> 8) & 0xff, height & 0xff);
+    bytes.push((width >> 8) & 0xff, width & 0xff);
+    return Uint8Array.from(bytes);
+  }
+
+  /** A minimal extended WebP, which carries the canvas size. */
+  function webpVP8X(width: number, height: number): Uint8Array {
+    const bytes = new Uint8Array(30);
+    bytes.set([0x52, 0x49, 0x46, 0x46], 0);
+    bytes.set([0x57, 0x45, 0x42, 0x50], 8);
+    bytes.set([0x56, 0x50, 0x38, 0x58], 12);
+    bytes[16] = 10;
+    const w = width - 1;
+    const h = height - 1;
+    bytes.set([w & 0xff, (w >> 8) & 0xff, (w >> 16) & 0xff], 24);
+    bytes.set([h & 0xff, (h >> 8) & 0xff, (h >> 16) & 0xff], 27);
+    return bytes;
+  }
+
+  it('reads the format and the true size from the payload', () => {
     const png = Uint8Array.from(atob(PNG_4x4), (c) => c.charCodeAt(0));
-    expect(detectImageType(png)).toBe('image/png');
+    expect(inspectImage(png)).toEqual({ mimeType: 'image/png', width: 4, height: 4 });
 
     const gif = Uint8Array.from(
       atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
       (c) => c.charCodeAt(0),
     );
-    expect(detectImageType(gif)).toBe('image/gif');
+    expect(inspectImage(gif)).toEqual({ mimeType: 'image/gif', width: 1, height: 1 });
 
-    expect(detectImageType(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toBe('image/jpeg');
+    expect(inspectImage(jpeg(640, 480))).toEqual({
+      mimeType: 'image/jpeg',
+      width: 640,
+      height: 480,
+    });
+
+    expect(inspectImage(webpVP8X(800, 600))).toEqual({
+      mimeType: 'image/webp',
+      width: 800,
+      height: 600,
+    });
+  });
+
+  it('walks past metadata to reach a JPEG frame header', () => {
+    expect(inspectImage(jpeg(1, 1))?.width).toBe(1);
   });
 
   it('does not accept RIFF that is not WebP', () => {
     // A RIFF container holding WAVE audio starts the same way a WebP does.
-    const wave = new Uint8Array(12);
+    const wave = new Uint8Array(30);
     wave.set([0x52, 0x49, 0x46, 0x46], 0);
     wave.set([0x57, 0x41, 0x56, 0x45], 8);
-    expect(detectImageType(wave)).toBeNull();
-
-    const webp = new Uint8Array(12);
-    webp.set([0x52, 0x49, 0x46, 0x46], 0);
-    webp.set([0x57, 0x45, 0x42, 0x50], 8);
-    expect(detectImageType(webp)).toBe('image/webp');
+    expect(inspectImage(wave)).toBeNull();
   });
 
-  it('rejects something that is not an image at all', () => {
-    const html = new TextEncoder().encode('<html><script>alert(1)</script>');
-    expect(detectImageType(html)).toBeNull();
-    expect(detectImageType(new Uint8Array())).toBeNull();
+  it('refuses to guess when the header is absent or truncated', () => {
+    // A signature alone says nothing about size, and answering "small" for a
+    // payload whose header cannot be read would hand the budget a way through.
+    expect(inspectImage(Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]))).toBeNull();
+    expect(inspectImage(new Uint8Array())).toBeNull();
+    expect(inspectImage(new TextEncoder().encode('<html><script>x</script>'))).toBeNull();
+  });
+
+  it('still answers the simpler question of which format it is', () => {
+    const png = Uint8Array.from(atob(PNG_4x4), (c) => c.charCodeAt(0));
+    expect(detectImageType(png)).toBe('image/png');
+    expect(detectImageType(new TextEncoder().encode('not an image'))).toBeNull();
   });
 });

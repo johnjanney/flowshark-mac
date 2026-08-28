@@ -72,27 +72,34 @@ fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
     }
 
     let temporary = temporary_path(target);
-    {
-        let mut file =
-            fs::File::create(&temporary).map_err(|error| describe(&error, &temporary))?;
-        file.write_all(bytes)
-            .map_err(|error| describe(&error, &temporary))?;
-        // Flush to the device before the rename, so a power loss cannot leave
-        // a renamed but empty file behind.
-        file.sync_all()
-            .map_err(|error| describe(&error, &temporary))?;
-    }
 
-    match fs::rename(&temporary, target) {
+    // Every failure past this point has to take the temporary file with it.
+    // Each attempt now gets its own name, so an early return would otherwise
+    // leave a fresh orphan beside the document on every retry — a full disk,
+    // which fails at `write_all`, would litter one per attempt.
+    let result = fill_temporary(&temporary, bytes)
+        .and_then(|()| fs::rename(&temporary, target).map_err(|error| describe(&error, target)));
+
+    match result {
         Ok(()) => {
             sync_parent_directory(target);
             Ok(())
         }
         Err(error) => {
             let _ = fs::remove_file(&temporary);
-            Err(describe(&error, target))
+            Err(error)
         }
     }
+}
+
+/// Write `bytes` into `temporary` and flush them to the device.
+fn fill_temporary(temporary: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut file = fs::File::create(temporary).map_err(|error| describe(&error, temporary))?;
+    file.write_all(bytes)
+        .map_err(|error| describe(&error, temporary))?;
+    // Flush to the device before the rename, so a power loss cannot leave a
+    // renamed but empty file behind.
+    file.sync_all().map_err(|error| describe(&error, temporary))
 }
 
 /// Flush the directory entry the rename created.
@@ -267,6 +274,35 @@ mod tests {
         // file, or the rename publishes a mixture of both payloads.
         let target = Path::new("/tmp/diagrams/Plan.flowshark");
         assert_ne!(temporary_path(target), temporary_path(target));
+    }
+
+    #[test]
+    fn a_failed_write_leaves_no_temporary_file_behind() {
+        // Writing into a path whose parent is a file, not a directory, fails
+        // at creation. Because each attempt has its own name, an attempt that
+        // does not clean up leaves an orphan that the next one cannot reuse.
+        let directory = std::env::temp_dir().join("flowshark-failed-write-test");
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let blocker = directory.join("not-a-directory");
+        fs::write(&blocker, b"x").unwrap();
+
+        let path = blocker.join("doc.flowshark");
+        let path_text = path.to_string_lossy().to_string();
+        assert!(write_atomic(&path_text, b"payload").is_err());
+
+        let leftovers = fs::read_dir(&directory)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".flowshark-tmp")
+            })
+            .count();
+        assert_eq!(leftovers, 0);
+        let _ = fs::remove_dir_all(&directory);
     }
 
     #[test]
