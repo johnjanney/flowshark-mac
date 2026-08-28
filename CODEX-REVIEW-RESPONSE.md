@@ -33,17 +33,20 @@ it applies. Everything else here is new.
 | `npm run build` | Passed | Passes |
 | `npm run smoke` | Blocked — no Chromium | **Passes, 26 steps** |
 | `cargo check`/`clippy`/`fmt` for `aarch64-apple-darwin` | not attempted | **Passes** — via `npm run check:macos`, which targets macOS and so sidesteps the missing Linux GTK packages |
-| `cargo test` on the host | Blocked — no `glib-2.0.pc` | Still blocked, same cause |
+| `cargo test` | Blocked — no `glib-2.0.pc` | Blocked in this container, same cause — **but run and passing on CI's macOS runner** |
 | `npm audit` | Blocked — HTTP 403 | **`npm audit` passes: 0 vulnerabilities** |
 
 Two corrections to the environment picture. Rust *is* checkable here — the
 macOS cross-check compiles `files.rs`, `macos.rs`, and the test bodies against
 the real target, so every Rust change below is type-checked, clippy-clean and
-`rustfmt`-clean, and only the *running* of Rust tests is unavailable. And the
-npm advisory endpoint works from this session: production and development
-dependencies both report zero known vulnerabilities. There is one open
-Dependabot alert (moderate) on the default branch, which npm's clean result
-suggests is a Cargo advisory; I have no Dependabot access here to read it.
+`rustfmt`-clean. Only the *running* of Rust tests is unavailable in this
+container, and CI covers that: the `Application shell` job on `macos-14` runs
+`cargo fmt --check`, `cargo clippy -D warnings` and `cargo test`, and all three
+pass on this branch's head. And the npm advisory endpoint works from this
+session: production and development dependencies both report zero known
+vulnerabilities. There is one open Dependabot alert (moderate) on the default
+branch, which npm's clean result suggests is a Cargo advisory; I have no
+Dependabot access here to read it.
 
 ---
 
@@ -405,7 +408,7 @@ Unreleased and in the two commits preceding this one.
 | `cargo fmt --check` | passes | passes |
 | `cargo clippy --all-targets --target aarch64-apple-darwin -D warnings` | clean | clean |
 | `npm audit` | — | 0 vulnerabilities |
-| `cargo test` on this host | blocked | blocked (no GTK); the test bodies are type-checked by the macOS cross-check |
+| `cargo test` | blocked in this container | **passing on CI** (`macos-14`), alongside `cargo fmt --check` and `clippy -D warnings` |
 
 Every fix has a test that fails against the original code, confirmed by
 stashing each source change in turn and re-running. Of the 22 new tests in
