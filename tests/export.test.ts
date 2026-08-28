@@ -10,7 +10,7 @@ import { boundsOf } from '../src/model/document';
 import { exportVectorPdf } from '../src/io/export-pdf';
 import { isWinAnsiSafe, pdfColor, pdfString } from '../src/io/pdf-writer';
 import { parsePath } from '../src/io/svg-path';
-import { escapeXml } from '../src/canvas/scene';
+import { buildScene, escapeXml } from '../src/canvas/scene';
 import { createEmptyDocument, createShapeElement } from '../src/model/defaults';
 import { addElement } from '../src/model/document';
 
@@ -210,5 +210,55 @@ describe('SVG path parsing', () => {
     const second = segments[2];
     if (second.type !== 'line') throw new Error('expected a line');
     expect(second.to).toEqual({ x: 20, y: 10 });
+  });
+});
+
+describe('interactive scene', () => {
+  const sceneOptions = (interactive: boolean) => ({
+    theme: {
+      background: '#ffffff',
+      gridLine: '#eeeeee',
+      gridLineStrong: '#dddddd',
+      pageBoundary: '#cccccc',
+    },
+    showGrid: false,
+    showPageBoundaries: false,
+    interactive,
+    accessible: false,
+  });
+
+  /**
+   * A text box has neither a fill nor a border, so without a hit area of its
+   * own there is nothing on screen for a click to land on and it can neither
+   * be selected nor double-clicked to edit.
+   */
+  it('gives an unfilled, unstroked shape something to hit', () => {
+    const doc = createEmptyDocument();
+    const box = createShapeElement({
+      shape: 'text-box',
+      frame: { x: 0, y: 0, width: 160, height: 44 },
+      text: 'Caption',
+      style: { fill: 'none', stroke: 'none' },
+      layerId: doc.layers[0].id,
+    });
+    addElement(doc, box);
+
+    const scene = buildScene(doc, sceneOptions(true));
+    expect(scene.body).toContain('class="fs-shape-hit"');
+    expect(scene.body).toContain('fill="transparent"');
+    expect(scene.body).toContain('stroke="transparent"');
+  });
+
+  it('gives every shape a hit area, whatever its style', () => {
+    const doc = getTemplate('basic-flowchart')!.build();
+    const scene = buildScene(doc, sceneOptions(true));
+    const shapes = doc.order.filter((id) => doc.elements[id].kind === 'shape').length;
+    expect(scene.body.match(/class="fs-shape-hit"/g)).toHaveLength(shapes);
+  });
+
+  it('leaves the hit areas out of exports', () => {
+    const doc = getTemplate('basic-flowchart')!.build();
+    const scene = buildScene(doc, sceneOptions(false));
+    expect(scene.body).not.toContain('fs-shape-hit');
   });
 });

@@ -52,6 +52,7 @@
   pointer-events: none;
 }
 
+.fs-shape-hit,
 .fs-shape-path,
 .fs-connector-hit,
 .fs-connector-line,

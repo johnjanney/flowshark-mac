@@ -197,6 +197,13 @@ export class CanvasRenderer {
       const id = node.dataset.id;
       if (id) this.nodeIndex.set(id, node);
     }
+
+    // The scene is rebuilt from scratch, so the marker that hides a shape's
+    // own text behind the inline editor has to be put back. The text tool
+    // starts editing in the same turn as it adds the shape, before that shape
+    // has ever been drawn, so this is also where the marker first lands.
+    const editing = this.store.getState().ui.editing;
+    if (editing) this.nodeIndex.get(editing.elementId)?.setAttribute('data-editing', 'true');
     this.updateTransform();
     this.renderOutline();
   }

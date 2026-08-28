@@ -194,6 +194,22 @@ function shapeMarkup(
   if (style.shadow) defs.filters.add('fs-shadow');
 
   const parts: string[] = [];
+  if (options.interactive) {
+    // A transparent copy of the outline underneath the real one, so that a
+    // shape answers the pointer over its whole area even when it is drawn
+    // with no fill or no stroke. Without it a text box — which is unfilled
+    // and unstroked by default — has nothing for the pointer to land on and
+    // cannot be selected or double-clicked to edit. Open outlines enclose no
+    // area, so those get a fat stroke to hit instead.
+    const hitStroke = geometry.open
+      ? Math.max(style.strokeWidth * 3, 12)
+      : Math.max(style.strokeWidth, 1);
+    parts.push(
+      `<path class="fs-shape-hit" d="${geometry.path}" fill="transparent" ` +
+        `stroke="transparent" stroke-width="${round(hitStroke, 2)}" ` +
+        `stroke-linejoin="round" stroke-linecap="round"/>`,
+    );
+  }
   parts.push(
     `<path class="fs-shape-path" d="${geometry.path}" fill="${fill}"` +
       opacityAttr('fill-opacity', style.fillOpacity) +

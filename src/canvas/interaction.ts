@@ -281,12 +281,17 @@ export class CanvasInteraction {
     }
 
     if (state.tool === 'text') {
+      // The mouse events the browser synthesises from this pointer down would
+      // move focus to the canvas surface, blurring the field the text editor
+      // is about to open and committing it before a key is pressed.
+      event.preventDefault();
       const placed = addShape(this.store, 'text-box', {
         center: snapPointToGrid(canvasPoint, this.store.document.canvas),
         text: '',
       });
       if (placed) {
         this.store.setTool('select');
+        this.callbacks.announce(`Added ${placed.name || 'Text Box'}.`);
         this.callbacks.beginTextEdit(placed.id);
       }
       return;

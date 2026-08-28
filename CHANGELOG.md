@@ -97,6 +97,13 @@ changes, and it goes up by one when it does.
   The toolbar now carries `data-tauri-drag-region`, and the capability file
   grants `core:window:allow-start-dragging`, which the drag handler needs.
   Double-clicking the strip zooms the window, as it should. (D-026)
+- Text boxes can be selected and edited. A text box is drawn with no fill and
+  no border, and hit testing runs against the drawn geometry, so there was
+  nothing under the pointer to click: the box could not be selected, dragged,
+  or double-clicked to edit. Every shape now carries a transparent hit area
+  the size of its outline, which also makes unfilled shapes and thin lines
+  easier to grab. Placing a text box with the text tool no longer loses the
+  keyboard focus the moment the field opens, so you can type straight away.
 
 ### Known gaps
 

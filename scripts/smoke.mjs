@@ -137,6 +137,52 @@ async function main() {
     if (!text.includes('Reviewed')) throw new Error('typed text did not appear on the canvas');
   });
 
+  await step('places a text box, types in it, and selects it again', async () => {
+    const before = await count();
+    await page.keyboard.press('Escape');
+    await page.click('button[data-command="tool.text"]');
+    await page.waitForTimeout(120);
+    await page.mouse.click(980, 700);
+    await page.waitForSelector('.text-editor', { timeout: 4000 });
+    const focused = await page.evaluate(() =>
+      document.activeElement?.classList.contains('text-editor'),
+    );
+    if (!focused) throw new Error('the text editor did not keep keyboard focus');
+    await page.keyboard.type('Caption');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+
+    // A text box has no fill and no border, so this is the check that a click
+    // anywhere inside it still lands on the shape.
+    const centre = await page.evaluate(() => {
+      const groups = [...document.querySelectorAll('#canvas-root g[data-kind="shape"]')];
+      const node = groups.find((group) => (group.textContent ?? '').includes('Caption'));
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    });
+    if (!centre) throw new Error('the text box never reached the canvas');
+    await page.keyboard.press('Escape');
+    await page.mouse.click(centre.x, centre.y);
+    await page.waitForTimeout(180);
+    const outlines = await page.$$eval('#overlay .selection-outline', (nodes) => nodes.length);
+    if (outlines === 0) throw new Error('clicking the text box did not select it');
+
+    await page.mouse.dblclick(centre.x, centre.y);
+    await page.waitForSelector('.text-editor', { timeout: 4000 });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(150);
+
+    // Undo the caption and the text box itself, so the steps that follow see
+    // the diagram they expect.
+    await page.keyboard.press('Meta+z');
+    await page.waitForTimeout(150);
+    await page.keyboard.press('Meta+z');
+    await page.waitForTimeout(200);
+    const after = await count();
+    if (after !== before) throw new Error(`undo left ${after - before} extra elements`);
+  });
+
   await step('undoes and redoes the text edit', async () => {
     await page.keyboard.press('Meta+z');
     await page.waitForTimeout(150);
