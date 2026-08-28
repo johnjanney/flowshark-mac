@@ -88,8 +88,41 @@ changes, and it goes up by one when it does.
 
 ## [Unreleased]
 
+### Security
+
+- A document can no longer smuggle markup into the canvas or into an export.
+  Element identifiers and connector colours read out of a `.flowshark` file
+  were written straight into the generated SVG — into a gradient's `id`, into
+  the `fill="url(…)"` that points at it, into a clip path, and into an
+  arrowhead definition. A file crafted with a quotation mark in the right
+  place could close the attribute it was sitting in and add an attribute of
+  its own, which meant an event handler on a drawn element. The application's
+  content security policy stopped that handler from running inside FlowShark,
+  but an exported `.svg` carries no such policy, so a diagram sent to someone
+  else could have run script when they opened it in a browser. Generated
+  definitions are now named by the scene rather than by the document, and
+  every value that comes from a document is escaped on the way into markup.
+- A document can no longer embed an SVG image. The reader accepted
+  `image/svg+xml` even though FlowShark does not import SVG and has no
+  sanitiser for it, so a hand-written file could carry arbitrary SVG through
+  to the renderer and into every export. The accepted formats are now the same
+  bitmap formats the importer takes: PNG, JPEG, WebP, and GIF. (D-010)
+
 ### Fixed
 
+- Copying a shape that shows a picture and pasting it into another document or
+  another window now brings the picture with it. The pasteboard carried the
+  shape but not the image it referred to, so the paste arrived blank.
+- Saving no longer keeps pictures nothing is showing any more. Deleting an
+  image left its data in the file, so a document grew every time a picture was
+  placed and removed and never shrank again. Undo still restores both the
+  shape and its picture.
+- A connector label with a border is drawn in the border's own colour in an
+  exported PDF. It used to inherit the connector's line colour.
+- Editing a document that contains photographs is responsive again. Every edit
+  that was not restricted to a few elements copied and compared the whole of
+  the embedded image data, so adding a shape to a document with pictures in it
+  stalled for as long as the copy took.
 - The window can be moved again. FlowShark hides the system title bar and uses
   the toolbar in its place, but the strip was marked draggable with
   `-webkit-app-region`, a Chromium property that WKWebView ignores — so the

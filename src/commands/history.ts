@@ -79,8 +79,30 @@ interface Snapshot {
   canvas: CanvasSettings;
   meta: DocumentMeta;
   presets: StylePreset[];
+  /**
+   * The image map as it stood, holding each entry by reference.
+   *
+   * Embedded images are immutable: importing adds one, deleting or undoing
+   * removes one, and nothing ever edits an entry in place. That means the map
+   * can be captured and compared by identity, which matters because a
+   * photograph is megabytes of base64 — deep-cloning and `JSON.stringify`-ing
+   * every one of them on every unscoped edit made adding a shape to a document
+   * with pictures in it visibly slow.
+   */
   images: Record<string, EmbeddedImage | undefined>;
   scoped: boolean;
+}
+
+/** True when both maps hold the same ids bound to the same image objects. */
+function sameImages(
+  a: Record<string, EmbeddedImage | undefined>,
+  b: Record<string, EmbeddedImage | undefined>,
+): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) if (a[key] !== b[key]) return false;
+  return true;
 }
 
 function snapshot(doc: FlowsharkDocument, scope?: readonly ElementId[]): Snapshot {
@@ -102,7 +124,7 @@ function snapshot(doc: FlowsharkDocument, scope?: readonly ElementId[]): Snapsho
     canvas: deepClone(doc.canvas),
     meta: { ...doc.meta },
     presets: deepClone(doc.presets),
-    images: scope ? {} : deepClone(doc.images),
+    images: scope ? {} : { ...doc.images },
     scoped: !!scope,
   };
 }
@@ -154,13 +176,15 @@ function diff(
     afterPatch.presets = deepClone(doc.presets);
     changed = true;
   }
-  if (!before.scoped && !sameJson(before.images, doc.images)) {
+  if (!before.scoped && !sameImages(before.images, doc.images)) {
     const beforeImages: Record<string, EmbeddedImage | null> = {};
     const afterImages: Record<string, EmbeddedImage | null> = {};
     const keys = new Set([...Object.keys(before.images), ...Object.keys(doc.images)]);
     for (const key of keys) {
-      beforeImages[key] = before.images[key] ? deepClone(before.images[key]!) : null;
-      afterImages[key] = doc.images[key] ? deepClone(doc.images[key]) : null;
+      // Held by reference for the same reason the snapshot is: the entries are
+      // never mutated, so a patch can share them.
+      beforeImages[key] = before.images[key] ?? null;
+      afterImages[key] = doc.images[key] ?? null;
     }
     beforePatch.images = beforeImages;
     afterPatch.images = afterImages;
@@ -195,7 +219,7 @@ export function applyPatch(doc: FlowsharkDocument, patch: DocumentPatch): void {
   if (patch.images) {
     for (const [id, image] of Object.entries(patch.images)) {
       if (image === null) delete doc.images[id];
-      else doc.images[id] = deepClone(image);
+      else doc.images[id] = image;
     }
   }
 }

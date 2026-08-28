@@ -411,6 +411,13 @@ function drawConnector(
     const box: Rect = { x: centre.x - width / 2, y: centre.y - height / 2, width, height };
     if (label.background) {
       setFill(content, label.background);
+      // The connector's own stroke colour is still current here, so a bordered
+      // label would otherwise be outlined in the line's colour rather than its
+      // own.
+      if (label.border) {
+        setStroke(content, label.border);
+        content.push('1 w [] 0 d');
+      }
       content.push(
         `${fmt(box.x)} ${fmt(box.y)} ${fmt(box.width)} ${fmt(box.height)} re ${
           label.border ? 'B' : 'f'

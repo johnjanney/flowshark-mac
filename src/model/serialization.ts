@@ -274,15 +274,40 @@ function normaliseLayers(value: unknown): Layer[] {
   return layers.length > 0 ? layers : [defaultLayer()];
 }
 
+/**
+ * Keep the keys the preset actually set, with the values the normalisers gave
+ * them.
+ *
+ * A preset is a patch — only the properties it mentions are applied — so it
+ * cannot simply be normalised into a whole style. Normalising the whole style
+ * and then keeping only the keys that were present gives every value the same
+ * type checking the rest of the document gets, and drops keys that mean
+ * nothing. Without this, presets were the one part of a document that reached
+ * an element's style uninspected, and applying one from a hand-written file
+ * could put a string where the renderer expects a number.
+ */
+function presentKeysOnly<T extends object>(raw: Raw, normalised: T): Partial<T> {
+  const out: Partial<T> = {};
+  for (const key of Object.keys(normalised) as Array<keyof T & string>) {
+    if (key in raw) out[key] = normalised[key];
+  }
+  return out;
+}
+
 function normalisePresets(value: unknown): StylePreset[] {
   if (!Array.isArray(value)) return builtinPresets();
-  const presets = value.filter(isObject).map((raw, index) => ({
-    id: str(raw.id, `preset_${index}`),
-    name: str(raw.name, `Style ${index + 1}`),
-    shape: isObject(raw.shape) ? (raw.shape as StylePreset['shape']) : {},
-    text: isObject(raw.text) ? (raw.text as StylePreset['text']) : {},
-    connector: isObject(raw.connector) ? (raw.connector as StylePreset['connector']) : {},
-  }));
+  const presets = value.filter(isObject).map((raw, index) => {
+    const shapeRaw = isObject(raw.shape) ? raw.shape : {};
+    const textRaw = isObject(raw.text) ? raw.text : {};
+    const connectorRaw = isObject(raw.connector) ? raw.connector : {};
+    return {
+      id: str(raw.id, `preset_${index}`),
+      name: str(raw.name, `Style ${index + 1}`),
+      shape: presentKeysOnly(shapeRaw, normaliseShapeStyle(shapeRaw)),
+      text: presentKeysOnly(textRaw, normaliseTextStyle(textRaw)),
+      connector: presentKeysOnly(connectorRaw, normaliseConnectorStyle(connectorRaw)),
+    };
+  });
   return presets.length > 0 ? presets : builtinPresets();
 }
 
@@ -316,12 +341,21 @@ function normaliseCanvas(value: unknown): FlowsharkDocument['canvas'] {
   };
 }
 
+/**
+ * Image formats a document may carry.
+ *
+ * This is deliberately the same list `IMPORTABLE_IMAGE_TYPES` accepts, and it
+ * deliberately excludes SVG. FlowShark does not import SVG because doing it
+ * safely means sanitising untrusted markup (DECISIONS.md, D-010); accepting
+ * SVG here would have let a hand-written document carry exactly the payload
+ * that decision refuses, straight through to the renderer and into every
+ * export.
+ */
 const IMAGE_MIME_TYPES = new Set([
   'image/png',
   'image/jpeg',
   'image/webp',
   'image/gif',
-  'image/svg+xml',
 ]);
 
 function normaliseImages(value: unknown): FlowsharkDocument['images'] {
@@ -452,12 +486,35 @@ export function fromRaw(raw: unknown): FlowsharkDocument {
   };
 }
 
+/**
+ * Embedded images that some element still refers to.
+ *
+ * Deleting the shape that showed a picture leaves the picture itself in
+ * `doc.images`, because undo has to be able to put the shape back. Dropping
+ * the unreferenced ones on the way out means a document that has had images
+ * deleted shrinks again on the next save, instead of carrying the base64 of
+ * every picture it has ever held. This reads the document rather than
+ * changing it, so undo after a save still restores both shape and picture.
+ */
+function referencedImages(doc: FlowsharkDocument): FlowsharkDocument['images'] {
+  const used = new Set<string>();
+  for (const element of Object.values(doc.elements)) {
+    if (element.kind === 'shape' && element.imageRef) used.add(element.imageRef);
+  }
+  const out: FlowsharkDocument['images'] = {};
+  for (const [id, image] of Object.entries(doc.images)) {
+    if (used.has(id)) out[id] = image;
+  }
+  return out;
+}
+
 /** Serialise a document for writing to disk. */
 export function serializeDocument(doc: FlowsharkDocument, pretty = true): string {
   const payload: FlowsharkDocument = {
     ...doc,
     schemaVersion: CURRENT_SCHEMA_VERSION,
     meta: { ...doc.meta, modified: new Date().toISOString(), application: `FlowShark ${APP_VERSION}` },
+    images: referencedImages(doc),
   };
   return JSON.stringify(payload, null, pretty ? 2 : 0);
 }

@@ -192,3 +192,67 @@ describe('layout commands', () => {
     expect(Object.keys(store.document.elements).length).toBe(count);
   });
 });
+
+describe('embedded images through the history', () => {
+  function withImage(store: Store): string {
+    const id = 'img_test';
+    store.mutate('Insert Image', () => {
+      store.document.images[id] = {
+        id,
+        mimeType: 'image/png',
+        data: 'AAAA',
+        width: 2,
+        height: 2,
+        name: 'Test',
+      };
+    });
+    return id;
+  }
+
+  it('restores an image the transaction removed', () => {
+    const store = new Store(createEmptyDocument());
+    const id = withImage(store);
+    expect(store.document.images[id]).toBeDefined();
+
+    store.mutate('Remove Image', () => {
+      delete store.document.images[id];
+    });
+    expect(store.document.images[id]).toBeUndefined();
+
+    store.undo();
+    expect(store.document.images[id]).toBeDefined();
+    expect(store.document.images[id]!.data).toBe('AAAA');
+
+    store.redo();
+    expect(store.document.images[id]).toBeUndefined();
+  });
+
+  it('does not record an entry when the images are untouched', () => {
+    const store = new Store(createEmptyDocument());
+    withImage(store);
+    const before = store.history.undoLabel;
+    // A transaction that changes nothing at all must still be a no-op, even
+    // though the image map is now compared by identity rather than by value.
+    const changed = store.mutate('Nothing', () => {});
+    expect(changed).toBe(false);
+    expect(store.history.undoLabel).toBe(before);
+  });
+
+  it('notices an image that was replaced with a different one', () => {
+    const store = new Store(createEmptyDocument());
+    const id = withImage(store);
+    store.mutate('Replace Image', () => {
+      store.document.images[id] = {
+        id,
+        mimeType: 'image/png',
+        data: 'BBBB',
+        width: 2,
+        height: 2,
+        name: 'Test',
+      };
+    });
+    expect(store.document.images[id]!.data).toBe('BBBB');
+    store.undo();
+    expect(store.document.images[id]!.data).toBe('AAAA');
+  });
+});

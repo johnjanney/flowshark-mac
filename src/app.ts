@@ -67,7 +67,13 @@ import {
   visibleElements,
 } from './model/document';
 import { createEmptyDocument, defaultShapeStyle } from './model/defaults';
-import { isConnector, isGroup, isShape, type ElementId } from './model/types';
+import {
+  isConnector,
+  isGroup,
+  isShape,
+  type ElementId,
+  type FlowsharkDocument,
+} from './model/types';
 import {
   DocumentFormatError,
   deepClone,
@@ -906,10 +912,23 @@ export class FlowSharkApp {
       const target = element.target.elementId;
       if (source && target && ids.has(source) && ids.has(target)) ids.add(element.id);
     }
+    // Carry the pictures the copied shapes point at. Without them a paste into
+    // another window or another document would land a shape whose `imageRef`
+    // resolves to nothing, and the picture would silently vanish.
+    const images: FlowsharkDocument['images'] = {};
+    for (const id of ids) {
+      const element = doc.elements[id];
+      if (element && isShape(element) && element.imageRef) {
+        const image = doc.images[element.imageRef];
+        if (image) images[element.imageRef] = deepClone(image);
+      }
+    }
+
     const payload = {
       version: 1,
       elements: [...ids].map((id) => deepClone(doc.elements[id])),
       order: doc.order.filter((id) => ids.has(id)),
+      images,
     };
     return ELEMENT_CLIPBOARD_MARKER + JSON.stringify(payload);
   }
@@ -950,7 +969,7 @@ export class FlowSharkApp {
   }
 
   private pasteElements(json: string, matchStyle: boolean): void {
-    let payload: { elements?: unknown[]; order?: string[] };
+    let payload: { elements?: unknown[]; order?: string[]; images?: unknown };
     try {
       payload = JSON.parse(json);
     } catch {
@@ -971,6 +990,7 @@ export class FlowSharkApp {
             .map((element) => [String((element as { id?: string }).id ?? createId('e')), element]),
         ),
         order: payload.order ?? [],
+        images: payload.images ?? {},
       }),
     );
 
@@ -981,6 +1001,11 @@ export class FlowSharkApp {
 
     this.store.mutate('Paste', () => {
       const doc = this.store.document;
+      // The parser has already dropped anything that is not a format the
+      // renderer can draw, so these are safe to merge in.
+      for (const [id, image] of Object.entries(fragment.images)) {
+        if (!doc.images[id]) doc.images[id] = image;
+      }
       for (const [oldId, newId] of idMap) {
         const element = deepClone(fragment.elements[oldId]);
         element.id = newId;

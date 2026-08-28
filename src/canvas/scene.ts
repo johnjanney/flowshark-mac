@@ -32,6 +32,11 @@ import {
   pointAlongPolyline,
   tangentAlongPolyline,
 } from '../model/geometry';
+import { escapeXml } from '../util/xml';
+
+// Re-exported so callers that already build markup through the scene — the SVG
+// exporter and its tests — have one obvious place to reach for escaping.
+export { escapeXml } from '../util/xml';
 
 export interface SceneTheme {
   /** Page background, or `null` for a transparent scene. */
@@ -60,18 +65,6 @@ export interface Scene {
   body: string;
   /** Bounds of the drawn content, or `null` when nothing is drawn. */
   contentBounds: Rect | null;
-}
-
-const XML_ESCAPES: Record<string, string> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&apos;',
-};
-
-export function escapeXml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => XML_ESCAPES[character]);
 }
 
 function dashArray(style: 'solid' | 'dashed' | 'dotted', strokeWidth: number): string {
@@ -158,6 +151,29 @@ interface DefsCollector {
   clips: string[];
 }
 
+/**
+ * Names gradients and clip paths independently of the document.
+ *
+ * An element id comes out of the document, so it can be any string at all,
+ * including one carrying quotes and angle brackets. Interpolating it into an
+ * `id` attribute — and into the `url(#…)` that points back at it — let a
+ * crafted document inject markup into the rendered scene and into exported
+ * SVG. A counter cannot, and nothing outside a scene refers to these
+ * definitions by name.
+ *
+ * The counter is module-level rather than per scene because more than one
+ * scene can be in the page at once — the canvas, a print sheet, and a preview
+ * for each template in the chooser — and `url(#…)` resolves across the whole
+ * document. Restarting at 1 for each scene would let a print sheet pick up the
+ * canvas's gradient.
+ */
+let definitionCounter = 0;
+
+function nextDefId(prefix: string): string {
+  definitionCounter += 1;
+  return `${prefix}-${definitionCounter}`;
+}
+
 function shapeMarkup(
   element: ShapeElement,
   doc: FlowsharkDocument,
@@ -170,7 +186,7 @@ function shapeMarkup(
 
   let fill = style.fill === 'none' ? 'none' : escapeXml(style.fill);
   if (style.gradient) {
-    const id = `fs-grad-${element.id}`;
+    const id = nextDefId('fs-grad');
     const angle = ((style.gradient.angle % 360) + 360) % 360;
     const radians = (angle * Math.PI) / 180;
     const x1 = round(0.5 - Math.cos(radians) / 2, 4);
@@ -222,12 +238,12 @@ function shapeMarkup(
   if (element.imageRef) {
     const image = doc.images[element.imageRef];
     if (image) {
-      const clipId = `fs-clip-${element.id}`;
+      const clipId = nextDefId('fs-clip');
       defs.clips.push(`<clipPath id="${clipId}"><path d="${geometry.path}"/></clipPath>`);
       parts.push(
         `<image clip-path="url(#${clipId})" x="0" y="0" width="${round(frame.width, 2)}" ` +
           `height="${round(frame.height, 2)}" preserveAspectRatio="xMidYMid slice" ` +
-          `href="data:${image.mimeType};base64,${image.data}"/>`,
+          `href="data:${escapeXml(image.mimeType)};base64,${escapeXml(image.data)}"/>`,
       );
     }
   }

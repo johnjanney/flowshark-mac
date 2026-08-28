@@ -46,6 +46,8 @@ async function main() {
 
   const browser = await launchChromium();
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  // The browser build of copy and paste goes through `navigator.clipboard`.
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: url });
 
   const failures = [];
   page.on('console', (message) => {
@@ -489,6 +491,44 @@ async function main() {
     if (timing.ms > 1500) throw new Error(`building 500 elements took ${timing.ms.toFixed(0)} ms`);
     console.log(`\n     500 elements built in ${timing.ms.toFixed(0)} ms`);
     process.stdout.write('  ');
+  });
+
+  // Last, because it replaces the document: copying a picture and pasting it
+  // into a different document has to bring the picture with it. The clipboard
+  // payload carries only the elements' own fields, so the embedded image has
+  // to travel alongside them or the pasted shape arrives blank.
+  await step('carries an embedded image across a copy into a new document', async () => {
+    await page.evaluate(() => {
+      window.confirm = () => true;
+    });
+    const showing = await page.$$eval('#canvas-root image', (nodes) => nodes.length);
+    if (showing === 0) throw new Error('no shape on the canvas is showing an image');
+
+    // Select everything rather than clicking the picture: it sits under the
+    // menu bar, which would intercept the click.
+    await page.click('#canvas-scroll', { position: { x: 400, y: 500 } });
+    await page.keyboard.press('Meta+a');
+    await page.waitForTimeout(150);
+    await page.keyboard.press('Meta+c');
+    await page.waitForTimeout(400);
+
+    await page.keyboard.press('Meta+n');
+    await page.waitForTimeout(400);
+    const emptied = await page.$$eval('#canvas-root image', (nodes) => nodes.length);
+    if (emptied !== 0) throw new Error('the new document did not start empty');
+
+    await page.keyboard.press('Meta+v');
+    await page.waitForTimeout(600);
+    const drawn = await page.$$eval('#canvas-root image', (nodes) => nodes.length);
+    if (drawn === 0) {
+      throw new Error('the pasted shape lost its picture in the new document');
+    }
+    const href = await page.$eval('#canvas-root image', (node) =>
+      node.getAttribute('href') ?? '',
+    );
+    if (!href.startsWith('data:image/png;base64,')) {
+      throw new Error(`the pasted image has an unexpected source: ${href.slice(0, 40)}`);
+    }
   });
 
   await browser.close();

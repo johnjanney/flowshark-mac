@@ -567,6 +567,13 @@ features FlowShark cannot represent. Half of that is worse than none of it,
 because a half-sanitised import is a security hole in an application that
 otherwise never executes anything from a document.
 
+**Where it is enforced.** In two places, which have to agree: the importer
+(`IMPORTABLE_IMAGE_TYPES` in `src/io/import.ts`) and the document reader
+(`IMAGE_MIME_TYPES` in `src/model/serialization.ts`). The importer alone is
+not enough — a `.flowshark` file can be written by hand, so refusing SVG at
+the file dialog while accepting it out of a document would leave exactly the
+hole this decision refuses.
+
 **What would reverse it.** Users needing to bring artwork in from Illustrator
 or Figma. The work is a sanitising parser producing FlowShark shapes, with
 tests built from a corpus of hostile SVG.
