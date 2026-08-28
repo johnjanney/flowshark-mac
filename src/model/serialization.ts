@@ -22,6 +22,7 @@ import {
   type ShapeElement,
   type StylePreset,
 } from './types';
+import { inspectBase64Image } from '../util/image';
 import {
   APP_VERSION,
   builtinPresets,
@@ -73,6 +74,8 @@ export class NewerSchemaError extends DocumentFormatError {
  */
 export const DOCUMENT_LIMITS = {
   elements: 50_000,
+  /** Entries in the z-order list, which is read before it is filtered. */
+  order: 100_000,
   layers: 1_000,
   presets: 1_000,
   waypointsPerConnector: 10_000,
@@ -483,61 +486,6 @@ function decodedLength(base64: string): number {
   return Math.max(0, Math.floor((compact.length * 3) / 4) - padding);
 }
 
-/**
- * The first bytes of a base64 payload, as a lower-case hex string.
- *
- * Only the leading characters are decoded — enough to read a file signature —
- * so this stays cheap regardless of how large the payload is.
- */
-function leadingBytesHex(base64: string, count: number): string {
-  const compact = base64.replace(/\s+/g, '').slice(0, Math.ceil((count * 4) / 3) + 4);
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let bits = 0;
-  let accumulator = 0;
-  let hex = '';
-  for (const character of compact) {
-    const index = alphabet.indexOf(character);
-    if (index < 0) break;
-    accumulator = (accumulator << 6) | index;
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      hex += ((accumulator >> bits) & 0xff).toString(16).padStart(2, '0');
-      if (hex.length >= count * 2) break;
-    }
-  }
-  return hex.slice(0, count * 2);
-}
-
-/**
- * Signatures for the formats FlowShark draws, so a payload has to be what it
- * says it is.
- *
- * The declared MIME type is just a string in a file someone else may have
- * written. Checking the bytes means a record labelled `image/png` that holds
- * something else is refused here rather than being handed to the renderer, to
- * a canvas, and into every export.
- */
-const IMAGE_SIGNATURES: Record<string, readonly string[]> = {
-  'image/png': ['89504e470d0a1a0a'],
-  'image/jpeg': ['ffd8ff'],
-  'image/gif': ['474946383761', '474946383961'],
-  // RIFF....WEBP: the four bytes at offset 4 are the payload length, so only
-  // the container tag is fixed.
-  'image/webp': ['52494646'],
-};
-
-function signatureMatches(mimeType: string, data: string): boolean {
-  const signatures = IMAGE_SIGNATURES[mimeType];
-  if (!signatures) return false;
-  const head = leadingBytesHex(data, 8);
-  if (mimeType === 'image/webp') {
-    // Check the RIFF tag and the WEBP form type, skipping the length between.
-    return head.startsWith('52494646') && leadingBytesHex(data, 12).slice(16) === '57454250';
-  }
-  return signatures.some((signature) => head.startsWith(signature));
-}
-
 function normaliseImages(value: unknown): FlowsharkDocument['images'] {
   const out: FlowsharkDocument['images'] = {};
   if (!isObject(value)) return out;
@@ -552,8 +500,10 @@ function normaliseImages(value: unknown): FlowsharkDocument['images'] {
     if (!IMAGE_MIME_TYPES.has(mimeType)) continue;
     const data = str(raw.data);
     if (!/^[A-Za-z0-9+/=\s]*$/.test(data)) continue;
-    // The bytes have to agree with the label before anything draws them.
-    if (!signatureMatches(mimeType, data)) continue;
+    // Ask the payload what it is. A record whose bytes do not match the type
+    // it claims, or whose header cannot be read at all, is not drawn.
+    const actual = inspectBase64Image(data);
+    if (!actual || actual.mimeType !== mimeType) continue;
 
     const bytes = decodedLength(data);
     if (bytes > DOCUMENT_LIMITS.imageBytes) {
@@ -564,18 +514,23 @@ function normaliseImages(value: unknown): FlowsharkDocument['images'] {
       overBudget('bytes of embedded images', totalBytes, DOCUMENT_LIMITS.totalImageBytes);
     }
 
-    const width = boundedPositive(raw.width, 1, MAX_EXTENT, 1);
-    const height = boundedPositive(raw.height, 1, MAX_EXTENT, 1);
-    if (width * height > DOCUMENT_LIMITS.imagePixels) {
-      overBudget('pixels in one embedded image', width * height, DOCUMENT_LIMITS.imagePixels);
+    // The budget is applied to the size the payload really is, not to the
+    // `width` and `height` the document records beside it: those are separate
+    // fields a hostile file can set to 1 x 1 for an enormous picture, and it
+    // is the payload the renderer decodes.
+    const pixels = actual.width * actual.height;
+    if (pixels > DOCUMENT_LIMITS.imagePixels) {
+      overBudget('pixels in one embedded image', pixels, DOCUMENT_LIMITS.imagePixels);
     }
 
     out[key] = {
       id: boundedStr(raw.id, key),
       mimeType,
       data,
-      width,
-      height,
+      // Recorded from the payload for the same reason, so nothing downstream
+      // lays out a picture at a size it is not.
+      width: Math.max(1, actual.width),
+      height: Math.max(1, actual.height),
       name: boundedStr(raw.name),
     };
   }
@@ -632,6 +587,12 @@ export function fromRaw(raw: unknown): FlowsharkDocument {
 
   const elements: Record<string, DiagramElement> = {};
   const rawElements = isObject(migrated.elements) ? migrated.elements : {};
+  // Checked before the loop, not inside it: the point of the budget is to
+  // refuse the document without ever building the object graph.
+  requireWithin('elements', Object.keys(rawElements).length, DOCUMENT_LIMITS.elements);
+  if (Array.isArray(migrated.order)) {
+    requireWithin('entries in the drawing order', migrated.order.length, DOCUMENT_LIMITS.order);
+  }
   for (const value of Object.values(rawElements)) {
     if (!isObject(value)) continue;
     const element = normaliseElement(value, fallbackLayer);

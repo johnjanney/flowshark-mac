@@ -46,6 +46,29 @@ jobs:
           fi
           npm run version:check
 
+      # A release tag must not be able to produce an unsigned build that looks
+      # like a release, so this runs *before* the build step below: that step
+      # creates the draft release through the API and uploads to it, so a guard
+      # placed after it would fail only once the unsigned bundle was already
+      # published. The unsigned artefact people can try is the one the CI
+      # workflow's bundle job uploads, and it is labelled as such.
+      - name: Require the signing secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=""
+          [ -n "$APPLE_CERTIFICATE" ] || missing="$missing APPLE_CERTIFICATE"
+          [ -n "$APPLE_SIGNING_IDENTITY" ] || missing="$missing APPLE_SIGNING_IDENTITY"
+          [ -n "$APPLE_TEAM_ID" ] || missing="$missing APPLE_TEAM_ID"
+          if [ -n "$missing" ]; then
+            echo "Cannot cut a release without the Developer ID secrets:$missing." >&2
+            echo "See VERSIONING.md for the full list. Unsigned builds come from" >&2
+            echo "the CI workflow's bundle job, which labels them unsigned." >&2
+            exit 1
+          fi
+
       - name: Build, sign, notarise, and staple
         uses: tauri-apps/tauri-action@v0
         env:
@@ -68,26 +91,6 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: --target aarch64-apple-darwin
-
-      # A release tag must not be able to produce an unsigned build that looks
-      # like a release. The unsigned artefact people can try is the one the CI
-      # workflow's bundle job uploads, and it is labelled as such.
-      - name: Require the signing secrets
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          missing=""
-          [ -n "$APPLE_CERTIFICATE" ] || missing="$missing APPLE_CERTIFICATE"
-          [ -n "$APPLE_SIGNING_IDENTITY" ] || missing="$missing APPLE_SIGNING_IDENTITY"
-          [ -n "$APPLE_TEAM_ID" ] || missing="$missing APPLE_TEAM_ID"
-          if [ -n "$missing" ]; then
-            echo "Cannot cut a release without the Developer ID secrets:$missing." >&2
-            echo "See VERSIONING.md for the full list. Unsigned builds come from" >&2
-            echo "the CI workflow's bundle job, which labels them unsigned." >&2
-            exit 1
-          fi
 
       - name: Check the bundle
         env:
