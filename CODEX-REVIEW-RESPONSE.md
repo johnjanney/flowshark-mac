@@ -29,7 +29,7 @@ it applies. Everything else here is new.
 
 | Check | Codex | This response |
 |---|---|---|
-| `npm test` | Passed, 98 tests | **Passes, 138 tests** |
+| `npm test` | Passed, 98 tests | **Passes, 145 tests** |
 | `npm run build` | Passed | Passes |
 | `npm run smoke` | Blocked — no Chromium | **Passes, 26 steps** |
 | `cargo check`/`clippy`/`fmt` for `aarch64-apple-darwin` | not attempted | **Passes** — via `npm run check:macos`, which targets macOS and so sidesteps the missing Linux GTK packages |
@@ -297,15 +297,15 @@ and a `.flowshark` file can be written by hand. `D-010` now records where the
 policy is enforced, in both the importer and the reader, so the two cannot
 drift apart again.
 
-The magic-bytes half is fixed now. `detectImageType` reads the leading bytes
-and identifies PNG, JPEG, GIF and WebP by signature — including checking the
-`WEBP` form type, so a RIFF container holding WAVE audio is not accepted as an
-image. Importing verifies the bytes against the type inferred from the
-extension and refuses a mismatch by name. Document normalisation performs the
-same check on each embedded payload, decoding only the handful of leading
-characters it needs so the check stays cheap regardless of payload size.
-Declared dimensions are validated against the pixel budget before anything
-creates a canvas or an SVG image node.
+The magic-bytes half is fixed now, in `src/util/image.ts`, which reads both the
+format and the true pixel size from a payload's own header — PNG, JPEG, GIF and
+WebP, including the `WEBP` form type, so a RIFF container holding WAVE audio is
+not accepted as an image. Importing verifies the bytes against the type
+inferred from the extension and refuses a mismatch by name; the document reader
+runs the same inspection on each embedded payload, decoding only enough base64
+to reach the header. The module has no dependencies precisely so those two
+paths share one answer rather than keeping two that can disagree — which is
+what the bot review below found them doing.
 
 I did not move the sniffing into Rust as the review suggests. The check has to
 exist in TypeScript regardless — embedded records in a document never cross the
@@ -353,6 +353,73 @@ renderer injection, and there was an actual one.
 
 ---
 
+## Round two: the Codex bot reviewed this response
+
+Opening the pull request drew an automated Codex review of the fixes above. It
+raised five findings. **All five reproduced, and three were defects in my own
+work rather than pre-existing ones.** They are worth recording, because two of
+them meant a fix I had described as done was not doing anything.
+
+### It found that the headline budget was never enforced
+
+`DOCUMENT_LIMITS.elements` was declared and never referenced. I wrote the
+budget table for Finding 2, enforced six of its entries, and missed the one the
+whole finding was about — a document could still declare millions of elements
+and force the reader to build exactly the object graph the budget exists to
+refuse. My own tests covered layers, presets, waypoints, labels and images, and
+skipped elements, so nothing caught it.
+
+Now enforced before the element loop, with a matching budget for the drawing
+order, which is read and filtered before the element count can bound it.
+
+### It found the pixel budget was checking the wrong number
+
+The check read the document's own `width` and `height`. Those are fields
+*beside* the payload, not in it. A hostile file could declare `1 x 1` for a
+30000 x 30000 PNG, pass the check, and be embedded as a data URL that the
+renderer decodes at its real size. The check was, as written, worthless against
+the case it existed for.
+
+Budgets now come from the payload's own header, via the new `src/util/image.ts`
+described under Finding 9, and the recorded dimensions are taken from the
+payload too, so a document cannot lie about a picture it carries. A payload
+whose header cannot be read returns `null` rather than a small size: "cannot
+tell" and "is small" must not be the same answer, or truncating a header
+bypasses the budget. Writing the tests for it surfaced an off-by-one of my own,
+where a JPEG frame header ending exactly at the end of the decode window was
+missed.
+
+### It found the signing guard ran too late to do anything
+
+My Finding 6 fix put the guard *after* `tauri-action` — the step that builds,
+uploads, and creates the draft release. It would have failed only once the
+unsigned bundle was already published. The pull request said the workflow
+"checks the secrets before building", which was false. Moved ahead of the
+build.
+
+### And two more
+
+- Importing did not enforce the limits the reader enforces, so a highly
+  compressed image over the pixel budget could be embedded and saved into a
+  document that then refused to open. The importer now applies the same
+  budgets, sharing the module above so the two cannot drift apart.
+- `write_atomic` returned early on `write_all` and `sync_all` failures without
+  removing the temporary file. Harmless while the name was predictable and
+  reused — but the unique names I added for Finding 1 meant every failed retry
+  left a fresh orphan beside the document. A regression I introduced. All
+  failure paths now clean up.
+
+### What this says about the round above
+
+Two of my fixes were inert: one budget declared and never applied, one guard
+placed after the thing it guards. Both had prose describing them as working.
+That is a specific failure mode worth naming — I verified the *behaviour I
+changed* rather than the *claim I made about it*, and a test suite I wrote
+myself inherited the same blind spot. The five new tests here fail against the
+previous commit; the four earlier ones for those areas did not exist.
+
+---
+
 ## Where I disagree with the disposition
 
 The review's recommended disposition is sound and I have followed it. Two
@@ -378,12 +445,13 @@ overstatement, the unsynced directory — is right and is fixed.
 | `src/state/store.ts` | `documentRevision`, advanced in `markChanged`; `markSaved` takes the revision it is reporting on. |
 | `src/app.ts` | Save queue; revision captured with the serialised text; fingerprint-based conflict detection reset on every replacement; silent, revision-gated autosave; singly-encoded recovery snapshot that still reads the old shape. |
 | `src/model/serialization.ts` | `DOCUMENT_LIMITS` and enforcement; numeric clamping; image signature, byte and pixel budgets; `serializeDocument` takes the modification timestamp. |
-| `src/io/import.ts` | `detectImageType`; imports verified against their declared type. |
+| `src/util/image.ts` | **New.** Format and true pixel size read from a payload's own header, shared by the importer and the document reader. |
+| `src/io/import.ts` | Imports verified against their declared type, and held to the same byte and pixel budgets the reader applies. |
 | `src/platform/files.ts` | `fileFingerprint`; `fileModifiedAt` removed. |
 | `src-tauri/src/files.rs` | Unique temporary names; parent-directory fsync after rename; write size cap; `file_fingerprint`; `file_modified_at` removed. |
 | `src-tauri/src/lib.rs` | Command registration updated. |
 | `tests/saving.test.ts` | **New.** The save race, deterministically. |
-| `tests/document-limits.test.ts` | **New.** Budgets, clamping, and image signatures. |
+| `tests/document-limits.test.ts` | **New.** Budgets (elements and order included), clamping, and image format and size parsing. |
 | `tests/serialization.test.ts` | Real image payloads; a mislabelled-format case. |
 | `tests/hostile-document.test.ts` | Real image payloads. |
 | `.github/workflows/release.yml` | A release tag fails without the signing secrets. |
@@ -401,7 +469,7 @@ Unreleased and in the two commits preceding this one.
 | Check | At `977f2fb` | Now |
 |---|---|---|
 | `npm run typecheck` | clean | clean |
-| `npm test` | 98 passing | **138 passing** |
+| `npm test` | 98 passing | **145 passing** |
 | `npm run build` | passes | passes |
 | `npm run smoke` | 25 steps | **26 steps** |
 | `npm run check:macos` | passes | passes |
@@ -411,11 +479,12 @@ Unreleased and in the two commits preceding this one.
 | `cargo test` | blocked in this container | **passing on CI** (`macos-14`), alongside `cargo fmt --check` and `clippy -D warnings` |
 
 Every fix has a test that fails against the original code, confirmed by
-stashing each source change in turn and re-running. Of the 22 new tests in
-`saving` and `document-limits`, 18 fail at `977f2fb`; the four that pass are
-the ones asserting behaviour that was already correct and had to stay correct
-(the clean save case, and that view and selection changes do not count as
-document changes).
+stashing each source change in turn and re-running. Of the 29 new tests in
+`saving` and `document-limits`, most fail at `977f2fb`; the ones that pass
+assert behaviour that was already correct and had to stay correct (the clean
+save case, and that view and selection changes do not count as document
+changes). The five tests added for the bot review's findings fail against the
+commit that preceded them.
 
 ## Still open after this round
 
