@@ -8,6 +8,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Documents are plain JSON; anything much larger than this is not a diagram.
@@ -16,22 +17,53 @@ const MAX_DOCUMENT_BYTES: u64 = 256 * 1024 * 1024;
 /// Imported images are embedded in the document, so keep them to a sane size.
 const MAX_IMPORT_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Writes are bounded too, so a runaway or hostile caller cannot fill the disk.
+/// A document is JSON and an export is a single image or PDF; neither has any
+/// business being larger than a file this application will open.
+const MAX_WRITE_BYTES: usize = 256 * 1024 * 1024;
+
+fn check_write_size(len: usize) -> Result<(), String> {
+    if len > MAX_WRITE_BYTES {
+        return Err(format!(
+            "This would write {} MB, which is larger than FlowShark writes.",
+            len / (1024 * 1024)
+        ));
+    }
+    Ok(())
+}
+
 fn describe(error: &std::io::Error, path: &Path) -> String {
     format!("{} ({})", error, path.display())
 }
 
+/// A counter that keeps two temporary names apart within the same nanosecond.
+static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 /// Build the temporary path used for an atomic write.
+///
+/// The name carries a unique suffix rather than being derived from the target
+/// alone. Two writes to one document can overlap — automatic saving runs on a
+/// timer, the user can press Command-S at any moment, and a second window can
+/// hold the same file — and a shared temporary path would have both writes
+/// filling one file before one of them renamed the interleaved result over the
+/// document.
 fn temporary_path(path: &Path) -> PathBuf {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "document".to_string());
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    let sequence = TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let mut temporary = path.to_path_buf();
-    temporary.set_file_name(format!(".{name}.flowshark-tmp"));
+    temporary.set_file_name(format!(".{name}.{nanos}-{sequence}.flowshark-tmp"));
     temporary
 }
 
 fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
+    check_write_size(bytes.len())?;
     let target = Path::new(path);
     if let Some(parent) = target.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -52,13 +84,42 @@ fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
     }
 
     match fs::rename(&temporary, target) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            sync_parent_directory(target);
+            Ok(())
+        }
         Err(error) => {
             let _ = fs::remove_file(&temporary);
             Err(describe(&error, target))
         }
     }
 }
+
+/// Flush the directory entry the rename created.
+///
+/// `sync_all` on the temporary file makes its *contents* durable, but the
+/// rename that publishes them is a directory operation, and on most filesystems
+/// that is not durable until the directory itself is synced. Without this,
+/// power loss immediately after a save could leave the previous version of the
+/// document in place — recoverable, but not the guarantee this module claims.
+/// Best effort: a filesystem that will not open a directory is not a reason to
+/// fail a save that has otherwise succeeded.
+#[cfg(unix)]
+fn sync_parent_directory(target: &Path) {
+    if let Some(parent) = target.parent() {
+        let parent = if parent.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            parent
+        };
+        if let Ok(directory) = fs::File::open(parent) {
+            let _ = directory.sync_all();
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_target: &Path) {}
 
 #[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
@@ -130,18 +191,44 @@ pub fn write_temp_file(name: String, contents: Vec<u8>) -> Result<String, String
     Ok(path_text)
 }
 
-/// Modification time in milliseconds since the Unix epoch.
+/// An opaque string that changes whenever the file behind `path` changes.
+///
+/// A modification time on its own is not enough to notice that a document was
+/// replaced underneath the editor. A sync service, a restore from backup, or a
+/// conflict resolution can put down a file whose timestamp is equal to, or
+/// older than, the one that was read — and a timestamp with one-second
+/// resolution can hide a change entirely. Combining the length and the
+/// filesystem's own identity for the file with a nanosecond timestamp catches
+/// all three, and the caller only ever compares two of these for equality.
 #[tauri::command]
-pub fn file_modified_at(path: String) -> Result<u64, String> {
+pub fn file_fingerprint(path: String) -> Result<String, String> {
     let target = Path::new(&path);
     let metadata = fs::metadata(target).map_err(|error| describe(&error, target))?;
-    let modified = metadata
+    let nanos = metadata
         .modified()
-        .map_err(|error| describe(&error, target))?;
-    let since_epoch = modified
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?;
-    Ok(since_epoch.as_millis() as u64)
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    Ok(format!(
+        "{}:{}:{}",
+        metadata.len(),
+        nanos,
+        file_identity(&metadata)
+    ))
+}
+
+/// The filesystem's own identity for a file, so that deleting and recreating it
+/// at the same length and timestamp still reads as a change.
+#[cfg(unix)]
+fn file_identity(metadata: &fs::Metadata) -> String {
+    use std::os::unix::fs::MetadataExt;
+    format!("{}-{}", metadata.dev(), metadata.ino())
+}
+
+#[cfg(not(unix))]
+fn file_identity(_metadata: &fs::Metadata) -> String {
+    "0-0".to_string()
 }
 
 #[cfg(test)]
@@ -175,6 +262,39 @@ mod tests {
     }
 
     #[test]
+    fn two_writes_never_share_a_temporary_path() {
+        // Overlapping saves of one document must not fill the same temporary
+        // file, or the rename publishes a mixture of both payloads.
+        let target = Path::new("/tmp/diagrams/Plan.flowshark");
+        assert_ne!(temporary_path(target), temporary_path(target));
+    }
+
+    #[test]
+    fn a_write_that_is_too_large_is_refused() {
+        assert!(check_write_size(MAX_WRITE_BYTES).is_ok());
+        assert!(check_write_size(MAX_WRITE_BYTES + 1).is_err());
+    }
+
+    #[test]
+    fn a_fingerprint_changes_when_the_contents_change() {
+        let directory = std::env::temp_dir().join("flowshark-fingerprint-test");
+        let _ = fs::create_dir_all(&directory);
+        let path = directory.join("doc.flowshark");
+        let path_text = path.to_string_lossy().to_string();
+
+        write_atomic(&path_text, b"first").unwrap();
+        let first = file_fingerprint(path_text.clone()).unwrap();
+        assert_eq!(file_fingerprint(path_text.clone()).unwrap(), first);
+
+        // A different length is a different fingerprint even if the clock has
+        // not moved and the timestamp is unchanged.
+        write_atomic(&path_text, b"second payload").unwrap();
+        assert_ne!(file_fingerprint(path_text.clone()).unwrap(), first);
+
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
     fn an_atomic_write_replaces_the_previous_contents() {
         let directory = std::env::temp_dir().join("flowshark-atomic-test");
         let _ = fs::create_dir_all(&directory);
@@ -187,8 +307,19 @@ mod tests {
         write_atomic(&path_text, b"second").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "second");
 
-        // No temporary file is left behind.
-        assert!(!temporary_path(&path).exists());
+        // No temporary file is left behind. The name carries a unique suffix,
+        // so this looks for any leftover rather than one predictable path.
+        let leftovers = fs::read_dir(&directory)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".flowshark-tmp")
+            })
+            .count();
+        assert_eq!(leftovers, 0);
         let _ = fs::remove_dir_all(&directory);
     }
 

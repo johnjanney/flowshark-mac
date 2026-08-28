@@ -156,11 +156,20 @@ boundary of the work.
 A `.flowshark` file is JSON with an integer `schemaVersion`. Older documents
 are migrated forward on load; a document written by a newer version of the app
 is refused with an explanation rather than half-loaded. Nothing in a document
-is ever executed, and embedded images are limited to the same bitmap formats
-the importer accepts — PNG, JPEG, WebP, and GIF — so a hand-written file
-cannot smuggle in the SVG that [D-010](DECISIONS.md#d-010-no-svg-import-yet)
-declines to sanitise. Saving drops any embedded image no element still shows,
-so deleting a picture shrinks the file again.
+is ever executed.
+
+Loading treats the file as untrusted throughout. Every field is normalised
+against the current defaults and clamped to a range a renderer can draw.
+Explicit budgets — element, layer, preset, waypoint, label and image counts,
+text length, decoded image bytes, image pixels — are enforced before anything
+is drawn, and a document over budget is refused with a message naming what was
+over rather than opened and left to stall. Embedded images are limited to the
+same bitmap formats the importer accepts — PNG, JPEG, WebP, and GIF — and each
+payload is checked against the file signature for the type it claims, so a
+hand-written file cannot smuggle in the SVG that
+[D-010](DECISIONS.md#d-010-no-svg-import-yet) declines to sanitise. Saving
+drops any embedded image no element still shows, so deleting a picture shrinks
+the file again.
 
 The application version and the document schema version are independent. See
 [VERSIONING.md](VERSIONING.md).
@@ -170,16 +179,22 @@ The application version and the document schema version are independent. See
 - **Unit tests** (`npm test`) cover serialisation and migration, geometry,
   connector routing, undo and redo, the layout commands, snapping, text
   layout, accelerators, and the export output — including checking that a
-  written PDF has valid cross-reference offsets. A separate set builds
-  documents designed to inject markup and parses the resulting scene and
-  exported SVG, so "no scripts and no event handlers" is checked against
-  hostile input rather than against the bundled templates.
+  written PDF has valid cross-reference offsets. Three sets deal with input
+  and state that cannot be trusted: `hostile-document` builds documents
+  designed to inject markup and parses the resulting scene and exported SVG,
+  so "no scripts and no event handlers" is checked against hostile input
+  rather than against the bundled templates; `document-limits` holds each
+  budget a document has to fit inside; and `saving` drives the save sequence
+  with a write the test controls, so an edit arriving mid-save is a
+  deterministic case rather than a matter of timing.
 - **A smoke test** (`npm run smoke`) drives the real interface in headless
   Chromium: adding shapes, editing text, connecting, undoing, aligning,
   grouping, exporting, dropping an image, copying it into a fresh document,
   and reading the accessible outline. It fails on any console error and saves
   screenshots.
-- **Rust tests** (`cd src-tauri && cargo test`) cover the atomic save and the
+- **Rust tests** (`cd src-tauri && cargo test`) cover the atomic save, the
+  uniqueness of the temporary name two overlapping saves would otherwise
+  share, the file fingerprint used to notice external changes, and the
   temporary-file path used by Share and drag-out.
 - **A macOS cross-check** (`npm run check:macos`) compiles
   `src-tauri/src/macos.rs` against the `aarch64-apple-darwin` target. That code

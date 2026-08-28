@@ -11,6 +11,10 @@ import { getTemplate } from '../src/templates';
 import { addElement } from '../src/model/document';
 import { createShapeElement } from '../src/model/defaults';
 
+/** A real 4x4 PNG, so payloads are checked against their declared type. */
+const PNG_4x4 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR42mO4Y2PzHxkzkC4AAO2YJTHTor4nAAAAAElFTkSuQmCC';
+
 describe('document serialization', () => {
   it('round-trips a template without losing elements', () => {
     const original = getTemplate('basic-flowchart')!.build();
@@ -87,7 +91,16 @@ describe('document serialization', () => {
     payload.images = {
       bad: { id: 'bad', mimeType: 'text/html', data: 'AAA', width: 1, height: 1, name: 'x' },
       worse: { id: 'worse', mimeType: 'image/png', data: '<script>', width: 1, height: 1, name: 'y' },
-      good: { id: 'good', mimeType: 'image/png', data: 'AAAA', width: 2, height: 2, name: 'z' },
+      mislabelled: {
+        // A real GIF claiming to be a PNG: the label alone is not evidence.
+        id: 'mislabelled',
+        mimeType: 'image/png',
+        data: 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+        width: 1,
+        height: 1,
+        name: 'w',
+      },
+      good: { id: 'good', mimeType: 'image/png', data: PNG_4x4, width: 2, height: 2, name: 'z' },
     };
     const restored = parseDocument(JSON.stringify(payload));
     expect(Object.keys(restored.images)).toEqual(['good']);

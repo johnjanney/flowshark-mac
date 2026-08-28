@@ -88,28 +88,51 @@ changes, and it goes up by one when it does.
 
 ## [Unreleased]
 
-### Security
-
-- A document can no longer smuggle markup into the canvas or into an export.
-  Element identifiers and connector colours read out of a `.flowshark` file
-  were written straight into the generated SVG — into a gradient's `id`, into
-  the `fill="url(…)"` that points at it, into a clip path, and into an
-  arrowhead definition. A file crafted with a quotation mark in the right
-  place could close the attribute it was sitting in and add an attribute of
-  its own, which meant an event handler on a drawn element. The application's
-  content security policy stopped that handler from running inside FlowShark,
-  but an exported `.svg` carries no such policy, so a diagram sent to someone
-  else could have run script when they opened it in a browser. Generated
-  definitions are now named by the scene rather than by the document, and
-  every value that comes from a document is escaped on the way into markup.
-- A document can no longer embed an SVG image. The reader accepted
-  `image/svg+xml` even though FlowShark does not import SVG and has no
-  sanitiser for it, so a hand-written file could carry arbitrary SVG through
-  to the renderer and into every export. The accepted formats are now the same
-  bitmap formats the importer takes: PNG, JPEG, WebP, and GIF. (D-010)
+### Changed
+- **Automatic saving is quiet.** It no longer shows a "Saved" notice on every
+  interval, and it no longer puts a modal question on screen when the file has
+  changed underneath — with nobody there to answer it, that stopped the save
+  and sat there. It now says so in a passing notice and leaves the document
+  unsaved for the next explicit save to resolve. It also does no work at all
+  when the document has not changed since the last snapshot.
+- The recovery snapshot for an unsaved document is stored without being encoded
+  twice, which roughly halves what has to fit in the browser storage quota.
+  Snapshots written by the previous version are still recovered.
+- **A release tag cannot produce an unsigned build.** The release workflow used
+  to warn and finish successfully when the Developer ID secrets were missing.
+  It now stops. Unsigned builds still come from the CI bundle job, which labels
+  them as such.
 
 ### Fixed
-
+- **An edit made while a save was running could be lost.** Saving serialises
+  the document and then waits for the write; the editor stays usable for that
+  whole time. When the write finished it cleared the "unsaved changes" flag
+  without asking whether the document was still the one that had been written,
+  so anything typed or drawn in between looked saved. Closing the window did
+  not warn, automatic saving saw nothing to do, and the work went. Saving now
+  records which version of the document reached disk and leaves the document
+  marked unsaved when it has moved on since.
+- **Two saves can no longer run at once.** Automatic saving runs on a timer and
+  Command-S can be pressed at any moment. Both wrote through a temporary file
+  named after the document, so two overlapping saves filled one file and then
+  renamed the mixture over the document. Saves now run one at a time, and each
+  temporary file has its own name.
+- **A document replaced on disk is noticed however its timestamp looks.** The
+  overwrite warning only appeared when the file's modification time was more
+  than a second newer than the one FlowShark had read. A sync service resolving
+  a conflict, a restore from a backup, or a filesystem with coarse timestamps
+  produces an equal or older time, and none of those were caught. FlowShark now
+  compares a fingerprint of the file — its length, its modification time, and
+  the filesystem's own identity for it — and treats any difference as a
+  conflict.
+- **Opening or creating a document no longer leaves the previous one's
+  timestamp behind**, which could have a save compare against the wrong file.
+- The modification time written into a saved file is now the one the open
+  document carries, rather than a moment that only ever existed on disk.
+- **Saving is durable across power loss.** The temporary file's contents were
+  flushed before the rename, but the rename that publishes them was not, so on
+  most filesystems an ill-timed power cut could leave the previous version in
+  place.
 - Copying a shape that shows a picture and pasting it into another document or
   another window now brings the picture with it. The pasteboard carried the
   shape but not the image it referred to, so the paste arrived blank.
@@ -138,6 +161,42 @@ changes, and it goes up by one when it does.
   easier to grab. Placing a text box with the text tool no longer loses the
   keyboard focus the moment the field opens, so you can type straight away.
 
+### Security
+- **A malformed or hostile document can no longer exhaust memory or hang the
+  application.** The 256 MB file cap bounded the file and nothing else: a
+  document within it could still declare millions of elements, connectors with
+  millions of waypoints, text fields megabytes long, or coordinates like 1e300,
+  and each of those went on to become an object graph, SVG markup, a history
+  snapshot, and a serialised copy. Documents are now held to explicit budgets
+  and refused, with a message naming what was over, rather than opened and left
+  to stall. Geometry and styling numbers are clamped to ranges a renderer can
+  actually draw.
+- **An embedded image has to be what it says it is.** Both importing a file and
+  reading a document trusted the declared type — which came from a filename
+  extension or from a string in the file. The first bytes are now checked
+  against the signature for the format claimed, so a payload that is something
+  else is refused before it reaches the renderer, a canvas, or an export.
+- Writes through the application's file commands are size-capped, and the
+  now-unused modification-time command has been removed from the interface the
+  web layer can reach.
+- A document can no longer smuggle markup into the canvas or into an export.
+  Element identifiers and connector colours read out of a `.flowshark` file
+  were written straight into the generated SVG — into a gradient's `id`, into
+  the `fill="url(…)"` that points at it, into a clip path, and into an
+  arrowhead definition. A file crafted with a quotation mark in the right
+  place could close the attribute it was sitting in and add an attribute of
+  its own, which meant an event handler on a drawn element. The application's
+  content security policy stopped that handler from running inside FlowShark,
+  but an exported `.svg` carries no such policy, so a diagram sent to someone
+  else could have run script when they opened it in a browser. Generated
+  definitions are now named by the scene rather than by the document, and
+  every value that comes from a document is escaped on the way into markup.
+- A document can no longer embed an SVG image. The reader accepted
+  `image/svg+xml` even though FlowShark does not import SVG and has no
+  sanitiser for it, so a hand-written file could carry arbitrary SVG through
+  to the renderer and into every export. The accepted formats are now the same
+  bitmap formats the importer takes: PNG, JPEG, WebP, and GIF. (D-010)
+
 ### Known gaps
 
 These are known and deliberate, not defects. Each is explained in
@@ -161,8 +220,14 @@ These are known and deliberate, not defects. Each is explained in
 
 ## [0.1.0] — 2026-08-27
 
-The first release. FlowShark is a complete single-user diagram editor: it
-covers everything in the MVP scope of the project brief.
+The first release. FlowShark is a complete single-user diagram editor covering
+the MVP feature set described in this repository's documentation.
+
+> The project brief those features were drawn from is **not in this
+> repository**, so "covers the MVP scope" cannot be checked against the source
+> requirements from here. The two Milestone 0 acceptance gates in
+> [DECISIONS.md](DECISIONS.md#milestone-0-gates) — performance on Apple
+> Silicon and VoiceOver in practice — are also still open, and both need a Mac.
 
 ### Added
 
@@ -312,8 +377,13 @@ covers everything in the MVP scope of the project brief.
 - More than one document window, native window tabs through the Window menu,
   Full Screen, Stage Manager, and Spaces.
 - Context menus on Control-click and right-click.
-- A signed, notarised, hardened-runtime bundle in a drag-to-install DMG, with
-  the single `com.apple.security.cs.allow-jit` entitlement the WebView needs.
+- A hardened-runtime bundle in a drag-to-install DMG, with the single
+  `com.apple.security.cs.allow-jit` entitlement the WebView needs. The release
+  workflow signs it with a Developer ID and notarises it, and now refuses to
+  build a release tag at all without those secrets — but the signing identity
+  itself is still listed as open in
+  [DECISIONS.md](DECISIONS.md#still-open), so no signed build has been produced
+  yet. Builds from the CI bundle job are unsigned and say so.
 
 **Accessibility**
 
@@ -339,12 +409,17 @@ covers everything in the MVP scope of the project brief.
   capabilities.
 - Imported documents are validated field by field and normalised against the
   current defaults; nothing in a document is ever executed.
-- Embedded images are restricted to formats the renderer can draw, and their
-  payloads are checked before use.
+- Embedded images are restricted to the bitmap formats the renderer can draw,
+  and each payload is checked against the file signature for the type it
+  claims to be.
 - All user text is escaped where it is rendered, so a document cannot inject
   markup into the canvas or into an exported SVG.
-- Documents are limited to 256 MB and imported images to 64 MB, so a malformed
-  file cannot exhaust memory.
+- Documents are limited to 256 MB and imported images to 64 MB on the way in.
+  A file within those caps is then held to explicit budgets — element, layer,
+  preset, waypoint, label, and image counts, text length, decoded image bytes,
+  and image pixels — and geometry and styling numbers are clamped to ranges a
+  renderer can draw. A document over budget is refused with a message naming
+  what was over, rather than being opened and left to stall.
 
 [Unreleased]: https://github.com/johnjanney/flowshark-mac/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/johnjanney/flowshark-mac/releases/tag/v0.1.0

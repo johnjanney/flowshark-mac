@@ -69,6 +69,26 @@ jobs:
           prerelease: false
           args: --target aarch64-apple-darwin
 
+      # A release tag must not be able to produce an unsigned build that looks
+      # like a release. The unsigned artefact people can try is the one the CI
+      # workflow's bundle job uploads, and it is labelled as such.
+      - name: Require the signing secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=""
+          [ -n "$APPLE_CERTIFICATE" ] || missing="$missing APPLE_CERTIFICATE"
+          [ -n "$APPLE_SIGNING_IDENTITY" ] || missing="$missing APPLE_SIGNING_IDENTITY"
+          [ -n "$APPLE_TEAM_ID" ] || missing="$missing APPLE_TEAM_ID"
+          if [ -n "$missing" ]; then
+            echo "Cannot cut a release without the Developer ID secrets:$missing." >&2
+            echo "See VERSIONING.md for the full list. Unsigned builds come from" >&2
+            echo "the CI workflow's bundle job, which labels them unsigned." >&2
+            exit 1
+          fi
+
       - name: Check the bundle
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -83,16 +103,8 @@ jobs:
           fi
           echo "Built $APP and $DMG."
 
-          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
-            # Without a Developer ID this is an ad-hoc signed build. It runs
-            # after the user allows it once; it is not distributable as-is.
-            echo "::warning::No signing identity configured, so this build is unsigned."
-            echo "::warning::Recipients will meet a Gatekeeper warning on first launch."
-            codesign --display --verbose=2 "$APP" || true
-            exit 0
-          fi
-
-          # With a Developer ID, every one of these must hold.
+          # The signing secrets were checked before the build, so every one of
+          # these must hold.
           codesign --verify --deep --strict --verbose=2 "$APP"
           xcrun stapler validate "$APP"
           spctl --assess --type execute --verbose "$APP"

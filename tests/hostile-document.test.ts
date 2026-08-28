@@ -20,6 +20,10 @@ import { defaultExportOptions } from '../src/io/export';
 import { markerId, markerMarkup } from '../src/connectors/markers';
 
 const BREAKOUT = '" onmouseover="alert(1)';
+/** A real 4x4 PNG and a real 1x1 GIF, so payloads match their declared type. */
+const PNG_4x4 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR42mO4Y2PzHxkzkC4AAO2YJTHTor4nAAAAAElFTkSuQmCC';
+const GIF_1x1 = 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 const TAG_BREAKOUT = 'x"><image href="y" onerror="alert(1)"/><b c="';
 
 function sceneOptions(overrides: Partial<SceneOptions> = {}): SceneOptions {
@@ -127,7 +131,7 @@ describe('a document built to inject markup', () => {
           imageRef: 'img1',
         },
       },
-      { img1: { id: 'img1', mimeType: 'image/png', data: 'AAAA', width: 4, height: 4 } },
+      { img1: { id: 'img1', mimeType: 'image/png', data: PNG_4x4, width: 4, height: 4 } },
     );
     const scene = buildScene(doc, sceneOptions());
     expect(hasExecutableMarkup(scene.defs)).toBe(false);
@@ -253,7 +257,7 @@ describe('embedded images in a document', () => {
     const doc = documentWith(
       {},
       {
-        good: { id: 'good', mimeType: 'image/png', data: 'AAAA', width: 1, height: 1 },
+        good: { id: 'good', mimeType: 'image/png', data: PNG_4x4, width: 1, height: 1 },
         bad: {
           id: 'bad',
           mimeType: 'image/svg+xml',
@@ -287,8 +291,8 @@ describe('embedded images in a document', () => {
         },
       },
       {
-        used: { id: 'used', mimeType: 'image/png', data: 'AAAA', width: 1, height: 1 },
-        orphan: { id: 'orphan', mimeType: 'image/png', data: 'BBBB', width: 1, height: 1 },
+        used: { id: 'used', mimeType: 'image/png', data: PNG_4x4, width: 1, height: 1 },
+        orphan: { id: 'orphan', mimeType: 'image/gif', data: GIF_1x1, width: 1, height: 1 },
       },
     );
     const saved = JSON.parse(serializeDocument(doc)) as { images: Record<string, unknown> };

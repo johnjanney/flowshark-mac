@@ -6,8 +6,8 @@
 //!
 //! 1. Reading and writing document files, with an atomic write so a failure
 //!    part-way through never damages the file that is already on disk.
-//! 2. Reporting a file's modification time, so the editor can notice when a
-//!    sync service has changed a document underneath it.
+//! 2. Fingerprinting a file, so the editor can notice when a sync service or a
+//!    restore has changed a document underneath it.
 //! 3. Opening additional document windows, and delivering the file the Finder
 //!    asked the app to open.
 
@@ -39,7 +39,7 @@ pub fn run() {
             files::save_text_atomic,
             files::save_binary_atomic,
             files::read_binary_file,
-            files::file_modified_at,
+            files::file_fingerprint,
             files::write_temp_file,
             windows::open_new_window,
             windows::print_window,
