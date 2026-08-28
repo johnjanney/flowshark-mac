@@ -145,7 +145,7 @@ updates. That is conditional on Gate 1 failing, and Gate 1 has not been run.
 Building an optimisation against an unmeasured bottleneck is the wrong order.
 
 ### Finding 4 — custom Tauri commands accept arbitrary paths
-**Codex: Medium, explicitly framed as defence in depth · Verdict: confirmed · Partly fixed**
+**Codex: Medium, explicitly framed as defence in depth · Verdict: confirmed · Fixed**
 
 Accurate. `read_text_file`, `read_binary_file`, `save_text_atomic`,
 `save_binary_atomic` and `file_modified_at` took any path, were registered for
@@ -155,20 +155,52 @@ text* — though see [What the review missed](#what-the-review-missed), because
 one did exist by another route, which makes this finding's premise less
 comfortable than it reads.
 
-**Done:** writes are now size-capped in Rust (the review specifically notes
+Writes are also size-capped in Rust (the review specifically notes
 `save_binary_atomic` had no limit), and `file_modified_at` has been removed
-entirely — it was superseded by the fingerprint command in Finding 5, so this
-is one fewer path-taking command rather than one more.
+entirely — it was superseded by the fingerprint command in Finding 5.
 
-**Not done: the grant system.** Replacing pathname I/O with opaque short-lived
-grants issued by the native panels is the right design and I have not built it.
-It changes every file-handling path in `app.ts`, the drop and Finder-open
-routes, and all five commands; it needs its own authorization tests; and the
-part that matters most — that a grant actually corresponds to what a real
-NSOpenPanel returned — cannot be exercised in this container. Landing a
-half-built authorization layer that looks like protection is worse than a
-clearly-documented absence. This is the largest item I am leaving for someone
-with a Mac.
+**Now done: the grant system.** I originally deferred this as too large and
+not verifiable here. That was the right call at the time and the wrong one to
+leave standing, so it is built.
+
+The panels are presented from Rust, and what crosses the boundary is a
+capability: `src-tauri/src/grants.rs` issues an opaque token for a file the
+user chose, recording whether it may be read, written or both, and whether it
+survives one use or the session. Every file command takes a token. A path still
+travels back for the title bar and the recent-documents menu, because showing a
+path the user just chose grants nothing.
+
+Grants are created at exactly three points, all of them the user acting:
+choosing a file in a panel, opening from the Finder or dropping on the window,
+and reopening from the recent-documents menu.
+
+Two things had to move to Rust to keep that true, and both are the interesting
+part of the change:
+
+- **Drops.** Tauri's own drag-drop event hands the web view the dropped
+  pathnames, which would put the renderer straight back in the business of
+  naming files. FlowShark listens for the drop in Rust and emits grants.
+- **The recent-documents list.** "The user picked this once" is exactly the
+  claim the web layer must not be able to make for itself, so the list is kept
+  and persisted on the Rust side and the menu is seeded from it at start-up.
+  Clearing the menu withdraws the ability to reopen.
+
+`dialog:allow-open`, `dialog:allow-save` and `opener:allow-reveal-item-in-dir`
+are gone from the capability file, because the web layer no longer does any of
+those things.
+
+**What it does not do**, and D-027 says so too: it is not the sandbox. A
+renderer compromise now reaches the files the user opened in that window rather
+than the whole file system — a smaller blast radius, not none. And it does not
+verify that a token corresponds to a real `NSOpenPanel` result; it verifies
+that this process issued the token for a path a user action produced, which is
+the same guarantee reached a different way. That distinction is why my original
+"cannot be exercised in this container" objection did not survive contact with
+the design: the grant store is ordinary logic and is tested as such.
+
+The browser build is unchanged in behaviour — there is no capability to hold,
+so the token is `null` and the path is only ever a display name — and the smoke
+test still drives that path end to end.
 
 ### Finding 5 — external-change detection misses changes and keeps stale state
 **Codex: Medium · Verdict: confirmed, both halves · Fixed**
@@ -528,9 +560,11 @@ maintainer's call about how the check should behave, not a defect.
 
 1. **Gate 1 and Gate 2** on Apple Silicon hardware — Finding 3, unchanged.
 2. **The project brief and its traceability matrix** — Finding 7.
-3. **The grant-based file authorization redesign** — Finding 4.
-4. **Recovery snapshots in Application Support** rather than `localStorage` —
-   Finding 8, best done with item 3.
-5. **A post-build macOS acceptance job** — Finding 6, blocked on a certificate.
+3. **Recovery snapshots in Application Support** rather than `localStorage` —
+   Finding 8. Now unblocked: `grants.rs` already owns a file in the app data
+   directory, so the native command this needs has somewhere to live.
+4. **A post-build macOS acceptance job** — Finding 6, blocked on a certificate.
+   This is also the only thing that would exercise the grant system against
+   real panels rather than against its unit tests.
 6. **A repeatable dependency audit.** The one open Dependabot alert is now
    assessed (below); nothing checks for the next one automatically.
