@@ -21,8 +21,9 @@ The cross-functional flowchart template, with swimlanes:
 
 - **Native-feeling.** A real macOS menu bar, the standard `⌘` shortcuts, the
   system Open and Save panels, live light and dark appearance, and Full Screen.
-- **Complete shape library.** All 27 standard flowchart shapes plus 15 general
-  shapes, containers, and annotations.
+- **Complete shape library.** 42 shapes: the 27 standard flowchart shapes —
+  including the swimlane and phase containers and the annotation and callout —
+  plus 15 general shapes.
 - **Connectors that behave.** Straight, elbow, curved, step, and freeform
   routes that stay attached and re-route when shapes move, with eleven
   endpoint styles and labels that travel along the line.
@@ -155,8 +156,11 @@ boundary of the work.
 A `.flowshark` file is JSON with an integer `schemaVersion`. Older documents
 are migrated forward on load; a document written by a newer version of the app
 is refused with an explanation rather than half-loaded. Nothing in a document
-is ever executed, and embedded images are limited to formats the renderer can
-actually draw.
+is ever executed, and embedded images are limited to the same bitmap formats
+the importer accepts — PNG, JPEG, WebP, and GIF — so a hand-written file
+cannot smuggle in the SVG that [D-010](DECISIONS.md#d-010-no-svg-import-yet)
+declines to sanitise. Saving drops any embedded image no element still shows,
+so deleting a picture shrinks the file again.
 
 The application version and the document schema version are independent. See
 [VERSIONING.md](VERSIONING.md).
@@ -166,12 +170,15 @@ The application version and the document schema version are independent. See
 - **Unit tests** (`npm test`) cover serialisation and migration, geometry,
   connector routing, undo and redo, the layout commands, snapping, text
   layout, accelerators, and the export output — including checking that a
-  written PDF has valid cross-reference offsets and that exported SVG contains
-  no scripts.
+  written PDF has valid cross-reference offsets. A separate set builds
+  documents designed to inject markup and parses the resulting scene and
+  exported SVG, so "no scripts and no event handlers" is checked against
+  hostile input rather than against the bundled templates.
 - **A smoke test** (`npm run smoke`) drives the real interface in headless
   Chromium: adding shapes, editing text, connecting, undoing, aligning,
-  grouping, exporting, dropping an image, and reading the accessible outline.
-  It fails on any console error and saves screenshots.
+  grouping, exporting, dropping an image, copying it into a fresh document,
+  and reading the accessible outline. It fails on any console error and saves
+  screenshots.
 - **Rust tests** (`cd src-tauri && cargo test`) cover the atomic save and the
   temporary-file path used by Share and drag-out.
 - **A macOS cross-check** (`npm run check:macos`) compiles

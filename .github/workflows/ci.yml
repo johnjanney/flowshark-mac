@@ -9,6 +9,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# CI only reads the repository; nothing here needs to write to it. The release
+# workflow asks for `contents: write` separately, where it is actually used.
+permissions:
+  contents: read
+
 jobs:
   frontend:
     name: Front end

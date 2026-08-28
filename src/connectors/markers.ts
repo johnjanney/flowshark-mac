@@ -9,6 +9,7 @@
  */
 
 import type { MarkerKind } from '../model/types';
+import { escapeXml, safeIdToken } from '../util/xml';
 
 export interface MarkerSpec {
   kind: MarkerKind;
@@ -134,12 +135,15 @@ const GEOMETRY: Record<Exclude<MarkerKind, 'none'>, MarkerGeometry> = {
   },
 };
 
-function sanitiseColor(color: string): string {
-  return color.replace(/[^a-zA-Z0-9]/g, '');
-}
-
+/**
+ * The identifier a marker is defined under.
+ *
+ * The colour is encoded rather than stripped of its punctuation: stripping
+ * would map `#ff0000` and `ff0000` onto the same identifier, and two
+ * connectors with different colours would then share one arrowhead.
+ */
 export function markerId(spec: MarkerSpec): string {
-  return `fs-marker-${spec.kind}-${sanitiseColor(spec.color)}${spec.reverse ? '-r' : ''}`;
+  return `fs-marker-${spec.kind}-${safeIdToken(spec.color)}${spec.reverse ? '-r' : ''}`;
 }
 
 /** Geometry for `kind`, for exporters that draw markers themselves. */
@@ -158,7 +162,9 @@ export function markerMarkup(spec: MarkerSpec): string {
   if (spec.kind === 'none') return '';
   const geometry = GEOMETRY[spec.kind];
   const id = markerId(spec);
-  const fill = geometry.filled ? spec.color : 'none';
+  // The colour comes from the document, so it reaches the markup escaped.
+  const color = escapeXml(spec.color);
+  const fill = geometry.filled ? color : 'none';
   // Mirror about the view-box centre so start markers point backwards.
   const transform = spec.reverse ? ' transform="rotate(180 6 6)"' : '';
   const refX = spec.reverse ? 12 - geometry.refX : geometry.refX;
@@ -166,7 +172,7 @@ export function markerMarkup(spec: MarkerSpec): string {
     `<marker id="${id}" viewBox="0 0 12 12" refX="${refX}" refY="6" ` +
     `markerWidth="${geometry.size}" markerHeight="${geometry.size}" ` +
     `markerUnits="strokeWidth" orient="auto">` +
-    `<path d="${geometry.d}" fill="${fill}" stroke="${spec.color}" ` +
+    `<path d="${geometry.d}" fill="${fill}" stroke="${color}" ` +
     `stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"${transform}/>` +
     `</marker>`
   );

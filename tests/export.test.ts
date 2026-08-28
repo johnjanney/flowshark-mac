@@ -11,7 +11,12 @@ import { exportVectorPdf } from '../src/io/export-pdf';
 import { isWinAnsiSafe, pdfColor, pdfString } from '../src/io/pdf-writer';
 import { parsePath } from '../src/io/svg-path';
 import { buildScene, escapeXml } from '../src/canvas/scene';
-import { createEmptyDocument, createShapeElement } from '../src/model/defaults';
+import {
+  createConnectorElement,
+  createEmptyDocument,
+  createShapeElement,
+  defaultLabelTextStyle,
+} from '../src/model/defaults';
 import { addElement } from '../src/model/document';
 
 const decoder = new TextDecoder('latin1');
@@ -165,6 +170,44 @@ describe('PDF export', () => {
     expect(text).toContain('/Type /Font');
     expect(text).toContain('/WinAnsiEncoding');
     expect(text).toContain('(Start) Tj');
+  });
+
+  it('draws a connector label border in the label\u2019s own colour', () => {
+    // The connector's stroke colour is still the current one when the label
+    // box is drawn, so a bordered label used to be outlined in the line's
+    // colour instead of its own.
+    const doc = createEmptyDocument();
+    const from = createShapeElement({ shape: 'process', frame: { x: 0, y: 0, width: 80, height: 40 } });
+    const to = createShapeElement({ shape: 'process', frame: { x: 300, y: 0, width: 80, height: 40 } });
+    addElement(doc, from);
+    addElement(doc, to);
+    const connector = createConnectorElement({
+      source: { elementId: from.id, anchor: { mode: 'floating' }, point: { x: 0, y: 0 } },
+      target: { elementId: to.id, anchor: { mode: 'floating' }, point: { x: 0, y: 0 } },
+    });
+    connector.style.stroke = '#ff0000';
+    connector.labels = [
+      {
+        id: 'label_1',
+        text: 'Yes',
+        style: defaultLabelTextStyle(),
+        position: 0.5,
+        offset: 0,
+        background: '#ffffff',
+        border: '#0000ff',
+      },
+    ];
+    addElement(doc, connector);
+
+    const text = decoder.decode(exportVectorPdf(doc, defaultExportOptions(), []));
+    const boxIndex = text.search(/-?[\d.]+ -?[\d.]+ -?[\d.]+ -?[\d.]+ re B/);
+    expect(boxIndex).toBeGreaterThan(-1);
+    // The last stroke colour set before the bordered box must be the border's
+    // blue, not the connector's red.
+    const strokes = [...text.slice(0, boxIndex).matchAll(/(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) RG/g)];
+    const last = strokes[strokes.length - 1];
+    expect(last).toBeDefined();
+    expect([Number(last[1]), Number(last[2]), Number(last[3])]).toEqual([0, 0, 1]);
   });
 });
 
