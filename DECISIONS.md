@@ -354,6 +354,15 @@ choose, and unsaved work still survives a crash. The cost is that recovery for
 an untitled document depends on browser-local storage inside the app's
 container, which is cleared if the user removes the app's support data.
 
+**What this depends on.** Saving is asynchronous and the editor stays live
+across it, so "has this been saved" is a question about a *revision*, not a
+boolean. The store carries a counter that advances on every document change; a
+write captures it alongside the serialised text and clears the dirty flag only
+if the document has not moved since. Writes also run one at a time — automatic
+saving and Command-S can otherwise meet, and the atomic write publishes a
+temporary file whose name must then be unique per write. Without those three
+things, an edit made while a save is in flight is marked saved and lost.
+
 **What would reverse it.** Adopting `NSDocument`-style autosave-in-place and
 Versions, which is a much larger piece of work and would probably arrive with a
 Swift rewrite.
@@ -828,8 +837,24 @@ Decisions the brief asks to be closed (§0.3), and where each one stands:
 | Product name | Settled: FlowShark, for personal and in-company use (D-018) |
 | Gate 1, on Apple Silicon | **Open.** Must be run on real hardware |
 | Gate 2, with VoiceOver | **Open.** Must be run on real hardware |
-| Signing identity | **Open.** CI is wired for it; the certificate and secrets are not in place |
+| Signing identity | **Open.** CI is wired for it, and the release workflow now refuses a release tag without the secrets; the certificate is not in place |
+| The project brief itself | **Open.** Not in this repository — see below |
 
-The two gates are the only questions left that this repository cannot answer
-for itself, and both need a Mac. What to measure is in
-[Milestone 0 gates](#milestone-0-gates) above.
+### The brief is not in the repository
+
+This file, the README, and comments throughout the source cite numbered brief
+sections — §8.14, §8.15, §13, §14 — but the brief itself is not tracked here
+and is not in the commit history. Anyone reviewing this repository on its own
+therefore cannot map an original requirement to the code that implements it,
+the test that covers it, or the decision that defers it. Claims about covering
+the MVP scope are not auditable from here.
+
+Adding a reconstructed brief would be worse than having none: it would read as
+the source of truth while actually being inferred from the implementation it is
+supposed to check. The brief needs to be added from wherever it actually lives,
+after which a traceability table — requirement, status, implementing files,
+evidence, decision reference — can be built against it.
+
+The gates and the brief are the questions this repository cannot answer for
+itself: both gates need a Mac, and the brief needs whoever holds it. What to
+measure is in [Milestone 0 gates](#milestone-0-gates) above.

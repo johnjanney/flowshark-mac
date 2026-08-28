@@ -77,6 +77,7 @@ import {
 import {
   DocumentFormatError,
   deepClone,
+  fromRaw,
   parseDocument,
   serializeDocument,
 } from './model/serialization';
@@ -90,7 +91,7 @@ import {
   DOCUMENT_EXTENSION,
   askToDiscardChanges,
   chooseSavePath,
-  fileModifiedAt,
+  fileFingerprint,
   openDocumentDialog,
   openImageDialog,
   readDocument,
@@ -149,7 +150,17 @@ export class FlowSharkApp {
 
   private readonly surface: HTMLElement;
   private autosaveTimer: number | null = null;
-  private lastKnownFileTime: number | null = null;
+  /**
+   * What the document's file looked like when it was last read or written.
+   *
+   * `null` means there is nothing to compare against — no file yet, or the
+   * browser build, where there is no filesystem to ask.
+   */
+  private lastKnownFingerprint: string | null = null;
+  /** Serialises writes so two saves can never be in flight at once. */
+  private saveQueue: Promise<void> = Promise.resolve();
+  /** Document revision the last recovery snapshot captured. */
+  private lastSnapshotRevision = -1;
   private overlayFrame = 0;
   private menuSyncTimer: number | null = null;
 
@@ -473,6 +484,7 @@ export class FlowSharkApp {
   }
 
   private loadTemplate(template: TemplateDefinition, markDirty: boolean): void {
+    this.lastKnownFingerprint = null;
     this.store.replaceDocument(template.build(), null, markDirty);
     this.renderer.renderScene();
     this.zoomToFit();
@@ -481,6 +493,7 @@ export class FlowSharkApp {
 
   async newDocument(): Promise<void> {
     if (!(await this.confirmDiscard())) return;
+    this.lastKnownFingerprint = null;
     this.store.replaceDocument(createEmptyDocument(), null, false);
     this.renderer.renderScene();
     this.store.setView({ zoom: 1, offset: { x: -80, y: -80 } });
@@ -501,7 +514,7 @@ export class FlowSharkApp {
     try {
       const result = await openDocumentDialog();
       if (!result) return;
-      this.applyLoadedDocument(result.contents, result.path);
+      await this.applyLoadedDocument(result.contents, result.path);
     } catch (error) {
       await this.reportError('The document could not be opened.', error);
     }
@@ -511,21 +524,23 @@ export class FlowSharkApp {
     if (!(await this.confirmDiscard())) return;
     try {
       const contents = await readDocument(path);
-      this.applyLoadedDocument(contents, path);
+      await this.applyLoadedDocument(contents, path);
     } catch (error) {
       await this.reportError('The document could not be opened.', error);
     }
   }
 
-  private applyLoadedDocument(contents: string, path: string): void {
+  private async applyLoadedDocument(contents: string, path: string): Promise<void> {
     const doc = parseDocument(contents);
+    // Clear first and capture before returning. Leaving the previous
+    // document's fingerprint in place, even briefly, would have the next save
+    // compare this file against the last one.
+    this.lastKnownFingerprint = null;
     this.store.replaceDocument(doc, path, false);
     this.renderer.renderScene();
     this.zoomToFit();
     this.refreshAll();
-    void fileModifiedAt(path).then((time) => {
-      this.lastKnownFileTime = time;
-    });
+    this.lastKnownFingerprint = await fileFingerprint(path);
     void this.nativeMenu.rebuild();
     showToast(`Opened ${doc.meta.title}.`);
   }
@@ -543,30 +558,98 @@ export class FlowSharkApp {
     return this.writeDocument(path);
   }
 
-  private async writeDocument(path: string): Promise<boolean> {
+  /**
+   * Run one write at a time.
+   *
+   * Two saves overlapping is not merely wasteful. Both serialise the document,
+   * both write, and — because the Rust side names its temporary file after the
+   * target — both write through the *same* temporary path before renaming it
+   * over the document. Interleaved, that produces a file holding parts of two
+   * payloads. Automatic saving fires on a timer and the user can press ⌘S at
+   * any moment, so the two really can meet.
+   */
+  private enqueueSave(task: () => Promise<boolean>): Promise<boolean> {
+    const result = this.saveQueue.then(task, task);
+    // Keep the chain usable after a rejected save.
+    this.saveQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private writeDocument(path: string, options: { silent?: boolean } = {}): Promise<boolean> {
+    return this.enqueueSave(() => this.performWrite(path, options));
+  }
+
+  private async performWrite(
+    path: string,
+    options: { silent?: boolean } = {},
+  ): Promise<boolean> {
+    const silent = options.silent === true;
     try {
       // Warn if the file changed underneath us — iCloud Drive and Dropbox do
       // this, and silently overwriting someone else's edit is not acceptable.
-      if (this.lastKnownFileTime !== null) {
-        const current = await fileModifiedAt(path);
-        if (current !== null && current > this.lastKnownFileTime + 1000) {
-          const overwrite = await askToDiscardChanges(
-            `${this.store.document.meta.title} (the file on disk changed since you opened it)`,
+      if (await this.fileChangedUnderneath(path)) {
+        if (silent) {
+          // An automatic save must not put a modal question on screen with
+          // nobody there to answer it. Leave the document dirty and say so;
+          // the next explicit save asks properly.
+          showToast(
+            'The file on disk has changed, so automatic saving has paused. Save to resolve it.',
+            'warning',
+            6000,
           );
-          if (!overwrite) return false;
+          return false;
         }
+        const overwrite = await askToDiscardChanges(
+          `${this.store.document.meta.title} (the file on disk changed since you opened it)`,
+        );
+        if (!overwrite) return false;
       }
-      await writeTextFile(path, serializeDocument(this.store.document));
-      this.store.markSaved(path);
-      this.lastKnownFileTime = await fileModifiedAt(path);
-      this.clearRecovery();
+
+      // Capture the revision alongside the text. The editor stays live across
+      // the await below, so by the time the write lands the document may have
+      // moved on, and only this pair can tell.
+      const revision = this.store.documentRevision;
+      const modified = new Date().toISOString();
+      const text = serializeDocument(this.store.document, true, modified);
+
+      await writeTextFile(path, text);
+
+      // Keep the in-memory timestamp in step with what actually reached disk.
+      this.store.document.meta.modified = modified;
+      this.store.markSaved(path, revision);
+      this.lastKnownFingerprint = await fileFingerprint(path);
+      if (this.store.documentRevision === revision) this.clearRecovery();
       void this.nativeMenu.rebuild();
-      showToast('Saved.');
+      if (!silent) showToast('Saved.');
       return true;
     } catch (error) {
+      if (silent) {
+        showToast('Automatic saving failed. Save to see why.', 'warning', 6000);
+        return false;
+      }
       await this.reportError('The document could not be saved.', error);
       return false;
     }
+  }
+
+  /**
+   * True when the file is not the one FlowShark last read or wrote.
+   *
+   * The previous test asked whether the modification time was more than a
+   * second *newer*. An equal, older, or coarse timestamp slipped through, and
+   * a sync service resolving a conflict or a restore from backup produces
+   * exactly those. Comparing a fingerprint catches any difference.
+   */
+  private async fileChangedUnderneath(path: string): Promise<boolean> {
+    if (this.lastKnownFingerprint === null) return false;
+    const current = await fileFingerprint(path);
+    // A file that cannot be read is not evidence of a conflict; the write
+    // itself will report the real problem.
+    if (current === null) return false;
+    return current !== this.lastKnownFingerprint;
   }
 
   async revert(): Promise<void> {
@@ -574,7 +657,7 @@ export class FlowSharkApp {
     if (!path) return;
     if (!(await askToDiscardChanges(this.store.document.meta.title))) return;
     try {
-      this.applyLoadedDocument(await readDocument(path), path);
+      await this.applyLoadedDocument(await readDocument(path), path);
     } catch (error) {
       await this.reportError('The document could not be reloaded.', error);
     }
@@ -608,24 +691,43 @@ export class FlowSharkApp {
   /**
    * Keep an unsaved copy so work survives a crash. Saved documents are written
    * back to their own file instead, when automatic saving is switched on.
+   *
+   * This runs on a timer with nobody necessarily watching, so it is silent: no
+   * "Saved" toast, and no modal question. It also does nothing when the
+   * document has not moved since the last snapshot, which matters because
+   * serialising is whole-document work on the UI thread.
    */
   private writeRecoverySnapshot(): void {
     const state = this.store.getState();
     if (!state.file.dirty) return;
+    const revision = this.store.documentRevision;
+    if (revision === this.lastSnapshotRevision) return;
+
     if (state.file.path) {
-      void this.writeDocument(state.file.path);
+      this.lastSnapshotRevision = revision;
+      void this.writeDocument(state.file.path, { silent: true }).then((written) => {
+        // A refused or failed automatic save must be retried on the next tick,
+        // not treated as done.
+        if (!written) this.lastSnapshotRevision = -1;
+      });
       return;
     }
     try {
+      // The document is stored as its own JSON value rather than as a string
+      // inside another one. Double-encoding escaped every quote in the
+      // document and roughly doubled what had to fit in the quota.
       globalThis.localStorage?.setItem(
         AUTOSAVE_KEY,
-        JSON.stringify({
-          savedAt: new Date().toISOString(),
-          document: serializeDocument(this.store.document, false),
-        }),
+        `{"savedAt":${JSON.stringify(new Date().toISOString())},"document":${serializeDocument(
+          this.store.document,
+          false,
+        )}}`,
       );
+      this.lastSnapshotRevision = revision;
     } catch {
-      // A full or unavailable store must not interrupt editing.
+      // A full or unavailable store must not interrupt editing. The quota is
+      // small, so a document with photographs in it will not fit; that is why
+      // the recovery snapshot is a backstop and not a substitute for saving.
     }
   }
 
@@ -638,16 +740,20 @@ export class FlowSharkApp {
   }
 
   private async offerRecovery(): Promise<boolean> {
-    let payload: { savedAt: string; document: string } | null = null;
+    let payload: { savedAt?: string; document?: unknown } | null = null;
     try {
       const raw = globalThis.localStorage?.getItem(AUTOSAVE_KEY);
       payload = raw ? JSON.parse(raw) : null;
     } catch {
       payload = null;
     }
-    if (!payload?.document) return false;
+    // Snapshots written before the document was stored as its own JSON value
+    // hold it as a string; both shapes are accepted so an upgrade does not
+    // throw away work that was waiting to be recovered.
+    const document = payload?.document;
+    if (document === undefined || document === null) return false;
 
-    const when = new Date(payload.savedAt).toLocaleString();
+    const when = new Date(payload?.savedAt ?? '').toLocaleString();
     const restore = window.confirm(
       `FlowShark has unsaved work from ${when}. Do you want to recover it?`,
     );
@@ -656,7 +762,10 @@ export class FlowSharkApp {
       return false;
     }
     try {
-      this.store.replaceDocument(parseDocument(payload.document), null, true);
+      const recovered =
+        typeof document === 'string' ? parseDocument(document) : fromRaw(document);
+      this.lastKnownFingerprint = null;
+      this.store.replaceDocument(recovered, null, true);
       showToast('Recovered your unsaved diagram.');
       return true;
     } catch {
@@ -1813,7 +1922,7 @@ export class FlowSharkApp {
     for (const file of Array.from(files)) {
       if (isDocumentPath(file.name)) {
         if (!(await this.confirmDiscard())) return;
-        this.applyLoadedDocument(await file.text(), file.name);
+        await this.applyLoadedDocument(await file.text(), file.name);
         return;
       }
       const mimeType = file.type || imageTypeForPath(file.name) || '';

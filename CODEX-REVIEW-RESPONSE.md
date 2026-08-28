@@ -1,357 +1,425 @@
 # Response to the Codex review
 
-## First: the review document is not in this repository
+**Responding to:** [CODEX-REVIEW.md](CODEX-REVIEW.md), dated 2026-08-28 against
+revision `977f2fb`.
 
-The task was to read `CODEX-REVIEW.md`, verify each finding in it, and respond.
-**That file does not exist anywhere in this repository.** Before concluding
-that, I checked:
+**Verdict on the review:** substantially correct. Eight of its nine findings
+reproduce exactly as described. The ninth (Finding 6) bundles four claims:
+three hold and are fixed, and one — that the documentation claims test coverage
+for text layout and accelerators that does not exist — is wrong, because the
+coverage does exist. Findings 1 and 2 are the serious ones; both are now fixed,
+with tests that fail against `977f2fb`.
 
-| Where I looked | Result |
-|---|---|
-| The working tree (`ls`, `find . -iname '*codex*'`) | Not present |
-| Every commit on every branch (`git ls-tree -r` over `git rev-list --all`) | Not present |
-| All remote branches (`claude/app-dev-and-docs-efn6gt`, `claude/text-box-selection-edit-6g5umy`) | Not present |
-| Pull requests, open and closed | There are none |
-
-The working tree was clean at the start of this session, so it was not a stray
-uncommitted file either.
-
-**Nothing below is a verification of Codex's findings, because there were none
-to verify.** What follows is the fresh review the task also asked for, done
-from scratch against the same five criteria — purpose, quality, performance,
-drift, and security — with the problems found and fixed. If you can supply
-`CODEX-REVIEW.md`, I will go through it finding by finding and reconcile it
-against this.
+The review also missed a defect of its own severity class, which a separate
+pass had already found and fixed: a `.flowshark` file could inject live markup
+into the canvas and into every exported SVG. That is described under
+[What the review missed](#what-the-review-missed).
 
 ---
 
-## What this review covered
+## Note on ordering
 
-The whole repository: about 20,000 lines across the TypeScript front end, the
-Rust shell, the tests, the build scripts, the CI workflows, and the six
-documentation files. Baseline before any changes was green — `tsc --noEmit`
-clean, 98 unit tests passing, and the headless smoke test passing.
+This response covers two rounds of work. A first pass reviewed the repository
+before `CODEX-REVIEW.md` was available (the file was not in the working tree,
+in any commit, on any branch, or in any pull request at the time) and landed
+two commits. Codex's Finding 9 partly overlaps that work, which is noted where
+it applies. Everything else here is new.
 
-`cargo test` and `npm run check:macos` could **not** be run here: this
-container is Linux and lacks the GTK development packages `cargo` needs for the
-host target. I made no changes to any Rust file, so the Rust side is
-byte-for-byte as CI last saw it, but I am flagging that rather than implying I
-verified it.
+## What I could and could not run
+
+| Check | Codex | This response |
+|---|---|---|
+| `npm test` | Passed, 98 tests | **Passes, 138 tests** |
+| `npm run build` | Passed | Passes |
+| `npm run smoke` | Blocked — no Chromium | **Passes, 26 steps** |
+| `cargo check`/`clippy`/`fmt` for `aarch64-apple-darwin` | not attempted | **Passes** — via `npm run check:macos`, which targets macOS and so sidesteps the missing Linux GTK packages |
+| `cargo test` on the host | Blocked — no `glib-2.0.pc` | Still blocked, same cause |
+| `npm audit` | Blocked — HTTP 403 | **`npm audit` passes: 0 vulnerabilities** |
+
+Two corrections to the environment picture. Rust *is* checkable here — the
+macOS cross-check compiles `files.rs`, `macos.rs`, and the test bodies against
+the real target, so every Rust change below is type-checked, clippy-clean and
+`rustfmt`-clean, and only the *running* of Rust tests is unavailable. And the
+npm advisory endpoint works from this session: production and development
+dependencies both report zero known vulnerabilities. There is one open
+Dependabot alert (moderate) on the default branch, which npm's clean result
+suggests is a Cargo advisory; I have no Dependabot access here to read it.
 
 ---
 
-## Findings
+## Finding-by-finding
 
-Severity is my own judgement. "Verified" means I reproduced the problem with a
-test that fails on the original code and passes on the fixed code.
+### Finding 1 — an edit made during a save can be marked saved and then lost
+**Codex: High · Verdict: confirmed, exactly as described · Fixed**
 
-### S-1 — A document could inject markup into the canvas and into exports
-**Severity: high · Verified · Fixed**
+The mechanism is precisely the one in the review. `writeDocument` serialised
+the document, awaited the write, and then called `markSaved` unconditionally.
+The editor stays live across that await, so:
 
-`src/canvas/scene.ts` built two identifiers out of an element's id:
+1. the save captures state **A**;
+2. the user edits, producing **B**, and `dirty` is set;
+3. the write of **A** resolves and `markSaved` clears `dirty`;
+4. `confirmDiscard` no longer prompts, and `writeRecoverySnapshot` returns
+   early on `if (!state.file.dirty) return`;
+5. **B** is gone.
 
-```ts
-const id = `fs-grad-${element.id}`;     // written into id="…" and url(#…)
-const clipId = `fs-clip-${element.id}`; // same
-```
+**One clarification that raises the severity.** The review says overlapping
+writes are possible without spelling out the consequence. The Rust writer named
+its temporary file after the target — `.{name}.flowshark-tmp` — deterministically.
+Two overlapping writes therefore did not merely race to rename; they both
+opened, truncated and wrote *the same temporary file*, and whichever renamed
+second published a file containing an interleaving of two payloads. That is
+document corruption, not just a lost edit. It is reachable from one window
+(the autosave timer versus ⌘S) and from two windows on one document, which is
+supported.
 
-An element id comes out of a `.flowshark` file, so it can be any string. The
-value went into the markup unescaped, both in the `<defs>` block and — the part
-that matters — in the `fill="url(#…)"` and `clip-path="url(#…)"` attributes of
-elements that are actually drawn. `escapeXml` was applied to `data-id` a few
-lines away, but not here.
+**Fixed**, following the review's recommendation:
 
-An element with id `a" onmouseover="alert(1)` and a gradient fill produced
-this in the rendered scene body:
+- `Store` carries a `documentRevision` that advances on every document change.
+  It is incremented inside `markChanged`, which is the single funnel every
+  mutation, undo, redo and replacement already passes through, so a future
+  command cannot forget it.
+- `performWrite` captures the revision alongside the serialised text.
+  `markSaved(path, revision)` clears `dirty` only if the document has not moved
+  since; otherwise the path and recent-files entry are recorded and the
+  document stays dirty.
+- Writes are serialised through one queue, so two can never be in flight.
+- The temporary file name now carries a unique suffix, closing the corruption
+  window the queue cannot reach across windows.
+- `serializeDocument` takes the modification timestamp as a parameter, and the
+  caller writes the same value into the file and into the in-memory document
+  once the write succeeds. Previously the document on disk always claimed a
+  time the running document did not have.
+
+`tests/saving.test.ts` drives the sequence with a write the test resolves by
+hand, covering edit-during-save, undo-during-save, write failure, the clean
+case, and which state changes do and do not advance the revision.
+
+### Finding 2 — hostile documents can exhaust CPU and memory despite the 256 MB cap
+**Codex: High · Verdict: confirmed · Fixed**
+
+Correct in every particular. The native cap bounded the UTF-8 file and nothing
+downstream. After `JSON.parse`, `normaliseElement` and friends accepted
+unbounded counts of elements, order entries, group children, waypoints, labels,
+presets, layers and images; `str()` had no length limit; and `num()` tested
+only `Number.isFinite`, so a coordinate of `1e300` or a font size of `1e9` was
+accepted and passed to path generation and text layout. Base64 syntax was
+checked but decoded size, aggregate size and pixel count were not.
+
+The CHANGELOG's claim that the size caps mean "a malformed file cannot exhaust
+memory" was accordingly wrong.
+
+**Fixed.** `DOCUMENT_LIMITS` in `src/model/serialization.ts` sets explicit
+budgets for element, layer, preset, waypoint, label, group-child and image
+counts, text length, per-image and total decoded bytes, and image pixels. They
+sit far above any real diagram — the documented target is 2,000 objects — and
+exist to turn a hang into a message. Over-budget documents are refused whole
+with a `DocumentFormatError` naming what was over and by how much; the review
+is right that silently truncating relationships would be worse. Geometry and
+styling values are clamped to documented ranges rather than merely being
+finite. Payload size is computed from the encoded length, so refusing an
+oversized image does not require allocating the buffer the budget exists to
+prevent.
+
+`tests/document-limits.test.ts` holds each boundary, checks the error message
+names the overrun, and checks a 2,000-element document still opens.
+
+### Finding 3 — the Apple Silicon and VoiceOver gates remain open
+**Codex: High · Verdict: confirmed. Cannot be closed from here**
+
+Correct, and `DECISIONS.md` already said so; the review is right that these are
+acceptance gates rather than future enhancements. Both need a Mac. Nothing in
+this session changes that, and I have not pretended to.
+
+What I could act on is the review's last recommendation — that release language
+should not outrun the evidence. The 0.1.0 changelog entry claimed to cover
+"everything in the MVP scope of the project brief"; it now states what the
+feature set is and says plainly that the claim is not checkable from this
+repository while the brief is absent and both gates are open.
+
+I did **not** act on the review's suggestion to implement keyed incremental DOM
+updates. That is conditional on Gate 1 failing, and Gate 1 has not been run.
+Building an optimisation against an unmeasured bottleneck is the wrong order.
+
+### Finding 4 — custom Tauri commands accept arbitrary paths
+**Codex: Medium, explicitly framed as defence in depth · Verdict: confirmed · Partly fixed**
+
+Accurate. `read_text_file`, `read_binary_file`, `save_text_atomic`,
+`save_binary_atomic` and `file_modified_at` took any path, were registered for
+every main window, and the app is deliberately unsandboxed. The review is also
+right that no document-to-script injection existed *by way of escaping user
+text* — though see [What the review missed](#what-the-review-missed), because
+one did exist by another route, which makes this finding's premise less
+comfortable than it reads.
+
+**Done:** writes are now size-capped in Rust (the review specifically notes
+`save_binary_atomic` had no limit), and `file_modified_at` has been removed
+entirely — it was superseded by the fingerprint command in Finding 5, so this
+is one fewer path-taking command rather than one more.
+
+**Not done: the grant system.** Replacing pathname I/O with opaque short-lived
+grants issued by the native panels is the right design and I have not built it.
+It changes every file-handling path in `app.ts`, the drop and Finder-open
+routes, and all five commands; it needs its own authorization tests; and the
+part that matters most — that a grant actually corresponds to what a real
+NSOpenPanel returned — cannot be exercised in this container. Landing a
+half-built authorization layer that looks like protection is worse than a
+clearly-documented absence. This is the largest item I am leaving for someone
+with a Mac.
+
+### Finding 5 — external-change detection misses changes and keeps stale state
+**Codex: Medium · Verdict: confirmed, both halves · Fixed**
+
+Both parts reproduce. The test was `current > this.lastKnownFileTime + 1000`,
+so an equal, older or sub-second-newer timestamp passed silently — exactly what
+cloud-sync conflict resolution, a restore, and coarse timestamp resolution
+produce. And `lastKnownFileTime` was never reset: `newDocument`, `loadTemplate`
+and recovery all left the previous document's timestamp in place, so a Save As
+after ⌘N compared the new file against the old document's time.
+
+**Fixed.** A new `file_fingerprint` command returns length, nanosecond
+modification time, and the filesystem's own identity for the file
+(`st_dev`/`st_ino` on Unix), combined into an opaque string the front end only
+ever compares for equality. Any difference is a conflict. The fingerprint is
+cleared synchronously before every document replacement, and
+`applyLoadedDocument` is now `async` and awaits capturing the new one before
+the open is complete — the previous fire-and-forget left a window where the
+value was neither the old one nor the new one.
+
+I did not add a content hash. The review offers it as a preference rather than
+a requirement, and hashing a file up to the 256 MB cap on every save is a cost
+the length-plus-identity-plus-time triple avoids while catching all three cases
+the review names.
+
+### Finding 6 — verification gaps and documentation that overstates coverage
+**Codex: Medium · Verdict: mixed — three claims confirmed, one incorrect · Partly fixed**
+
+Taking the claims separately, because they are not equally right.
+
+**Confirmed: the release workflow permitted an unsigned release.** With
+`APPLE_SIGNING_IDENTITY` unset it printed a warning and `exit 0`, so a release
+tag could produce a build the changelog described as signed and notarised.
+**Fixed:** the workflow now checks for the certificate, identity and team ID
+before building and fails the job if any is missing. The unconditional
+`codesign --verify` / `stapler validate` / `spctl --assess` checks follow.
+
+**Confirmed: the changelog overstated the bundle.** It listed "a signed,
+notarised, hardened-runtime bundle" as a shipped 0.1.0 feature while
+`DECISIONS.md` listed the signing identity as open. **Fixed:** the entry now
+describes what the workflow does, and says no signed build has been produced.
+
+**Confirmed: the atomic write did not sync the containing directory.**
+`sync_all` on the temporary file made its contents durable; the rename that
+publishes them was not synced, so rename durability after power loss was
+filesystem-dependent — while the module comment promised the previous version
+would survive. **Fixed** rather than merely documented: `write_atomic` now
+fsyncs the parent directory after the rename, on Unix, best-effort.
+
+**Incorrect: "the docs claim unit coverage for text layout and accelerator
+behavior without dedicated test files."** The coverage exists. Accelerators
+have `describe('accelerators')` in `tests/commands.test.ts` — parsing,
+formatting, event matching, the Option-key physical-key fallback, and unshifted
+zoom keys. Text layout has `describe('text layout')` in `tests/snap.test.ts` —
+wrapping, hard line breaks, long-word breaking, no-wrap, and horizontal and
+vertical alignment. The README claim is accurate. What is true is the weaker
+observation underneath it: the text-layout tests live in a file named after
+snapping, which makes them hard to find. That is a naming problem, not a
+coverage gap, and I have not moved them, because renaming test files to satisfy
+a mistaken finding is churn.
+
+**Not done: the post-build macOS acceptance job.** Installing the DMG,
+launching the app, opening a fixture through Finder registration and validating
+notarisation is the right check and it needs a signed build to validate, which
+needs the certificate that Finding 3 records as still missing. It cannot be
+written meaningfully before then.
+
+### Finding 7 — the authoritative project brief is missing
+**Codex: Medium · Verdict: confirmed · Recorded, not resolvable here**
+
+Correct. `README.md`, `DECISIONS.md` and source comments cite §8.14, §8.15,
+§13 and §14, and no brief exists in the tracked repository or its history. I
+searched the working tree, every commit on every branch, and the pull requests.
+The consequence the review draws is right: MVP-completeness claims are not
+auditable from this repository alone.
+
+**What I did:** added the brief to the "Still open" table in `DECISIONS.md`
+with a section explaining what its absence costs, and corrected the changelog
+claim as described under Finding 3.
+
+**What I deliberately did not do:** write the traceability matrix. A matrix
+built now would be derived from the implementation it is supposed to
+independently check, and would read as evidence while being a restatement of
+the code. The brief has to arrive first; the matrix is then worth building
+against it, and the decision log says so.
+
+### Finding 8 — autosave does synchronous whole-document work with intrusive side effects
+**Codex: Low · Verdict: confirmed · Fixed, except for the storage location**
+
+Every part reproduces. The unsaved-document path serialised the whole document
+and then embedded that string inside another JSON object — double-encoding that
+escaped every quote and roughly doubled the payload — before a synchronous
+`localStorage` write. The saved-document path ran the entire interactive Save
+flow on a timer: conflict check, native menu rebuild, recovery clearing, and a
+"Saved" toast.
+
+**Fixed:**
+
+- Automatic saving is silent: no toast, and no modal conflict question. A
+  modal raised from a timer with nobody present blocked the save and sat there;
+  it now leaves the document dirty and says so in a passing notice.
+- It is gated on the revision, so an interval with no edits does no work at
+  all — no serialisation, no write.
+- The snapshot stores the document as its own JSON value instead of a string
+  inside one. Snapshots in the old shape are still recovered, so upgrading does
+  not discard waiting work.
+- A refused or failed automatic save is retried on the next tick rather than
+  being recorded as done.
+
+**Not done: moving recovery to a native file in Application Support.** The
+review is right that `localStorage` is the wrong home — the quota is small, so
+a diagram with photographs will not fit, and `D-024` already accepts this as a
+known cost. Moving it means a new native command, a directory to own, and
+cleanup and migration rules, and it interacts directly with the grant design
+deferred under Finding 4. Doing it independently would mean building it twice.
+
+### Finding 9 — image validation trusts labels more than contents
+**Codex: Low · Verdict: confirmed · Fixed**
+
+Correct on both counts.
+
+The SVG half was already fixed in the earlier pass, independently and for the
+same reason the review gives: `image/svg+xml` was accepted by document
+normalisation even though SVG import is explicitly out of scope under D-010,
+and a `.flowshark` file can be written by hand. `D-010` now records where the
+policy is enforced, in both the importer and the reader, so the two cannot
+drift apart again.
+
+The magic-bytes half is fixed now. `detectImageType` reads the leading bytes
+and identifies PNG, JPEG, GIF and WebP by signature — including checking the
+`WEBP` form type, so a RIFF container holding WAVE audio is not accepted as an
+image. Importing verifies the bytes against the type inferred from the
+extension and refuses a mismatch by name. Document normalisation performs the
+same check on each embedded payload, decoding only the handful of leading
+characters it needs so the check stays cheap regardless of payload size.
+Declared dimensions are validated against the pixel budget before anything
+creates a canvas or an SVG image node.
+
+I did not move the sniffing into Rust as the review suggests. The check has to
+exist in TypeScript regardless — embedded records in a document never cross the
+Rust boundary at all — and putting it in both places means one policy in two
+languages that can disagree. The IPC-side benefit is bounded by the existing
+64 MB import cap.
+
+---
+
+## What the review missed
+
+The review states, under Finding 4, that "no direct document-to-script
+injection was found: scene strings escape user text and CSP is strong." The
+first half was not true at `977f2fb`.
+
+`src/canvas/scene.ts` built `fs-grad-${element.id}` and `fs-clip-${element.id}`
+and wrote them unescaped into `id` attributes **and into the `fill="url(#…)"`
+and `clip-path="url(#…)"` attributes of elements that are actually drawn**.
+An element id comes out of a `.flowshark` file. An id of `a" onmouseover="alert(1)`
+produced, in the rendered scene body:
 
 ```
 <path class="fs-shape-path" d="…" fill="url(#fs-grad-a" onmouseover="alert(1))" …/>
 ```
 
-That is a live event handler on a visible element. The same defect existed in
-`src/connectors/markers.ts`, where a connector's stroke colour was interpolated
-into `<marker>` markup unescaped.
+`escapeXml` was applied to `data-id` a few lines away but not here.
+`src/connectors/markers.ts` had the same defect for a connector's stroke
+colour. The review's own observation that "most SVG attributes pass through XML
+escaping" — *most* — is where the gap sat.
 
-The scene reaches the DOM through `innerHTML` in three places
-(`renderer.ts:191`, `renderer.ts:193`, `dialogs.ts:146`) and through a fourth
-in the print sheet (`app.ts`), and it is also written verbatim into exported
-`.svg` files.
+The CSP does block the injected handler inside the packaged app, so the
+review's assessment of the app's runtime posture holds. But an exported `.svg`
+carries no CSP, and a recipient opening one in a browser opens a scriptable
+document. FlowShark could turn a malicious `.flowshark` into a malicious
+`.svg` — the exact guarantee the README and the export test claim.
 
-**How bad it actually is.** Inside the packaged app, `tauri.conf.json` sets
-`script-src 'self'` with no `'unsafe-inline'`, which stops the injected handler
-from firing. That is a real mitigation and worth crediting. But it is the only
-thing standing in the way, and it does not cover two cases:
+The existing "no scripts or event handlers" test could not have caught it: it
+built its document from a bundled template, which contains nothing hostile.
+`tests/hostile-document.test.ts` now builds documents designed to break out of
+each attribute and asserts against the parsed DOM rather than the raw string.
 
-- `npm run dev` and `npm run smoke` serve the same front end with no CSP.
-- **An exported `.svg` carries no CSP at all.** A recipient opening a diagram
-  in a browser opens a full SVG *document*, where scripting is enabled. So
-  FlowShark could be used to produce a malicious SVG from a malicious
-  `.flowshark` — which is precisely the guarantee `README.md` and the export
-  test claim to hold.
-
-**Fix.** Gradients and clip paths are now named by a counter instead of by the
-document. Nothing outside a scene refers to them by name, so a counter is both
-safe and collision-free — safer than sanitising the id, which would let two
-different ids collapse onto one name and silently share a gradient. `escapeXml`
-was moved into a new `src/util/xml.ts` so `markers.ts` can use it without a
-circular import, and the marker colour is now escaped. The embedded-image
-`mimeType` and `data` are escaped at the sink too, as belt and braces.
-
-One note on that fix, because it nearly introduced a bug of its own. My first
-version reset the counter for each scene. That is wrong: more than one scene
-can be in the page at once — the canvas, the print sheet, and a preview for
-every template in the chooser — and `url(#…)` resolves across the whole
-document, so two scenes both naming a gradient `fs-grad-1` would have had the
-print sheet paint with the canvas's gradient. No bundled template uses a
-gradient today, so it would not have shown up in the test suite; it would have
-shown up when someone printed a diagram with a gradient in it. The counter is
-now module-level and monotonic, and a test pins that two scenes never share a
-definition name.
-
-### S-2 — The "no scripts in exported SVG" test could not have caught S-1
-**Severity: medium (test gap) · Verified · Fixed**
-
-`tests/export.test.ts` had two relevant tests. One asserted no `<script>` and
-no `on…=` in the export — but built its document from a bundled template, which
-contains nothing hostile. The other checked escaping of a shape's `text` only.
-Neither exercised an id, a colour, a label, or alt text.
-
-**Fix.** New `tests/hostile-document.test.ts` builds documents specifically
-designed to break out of each attribute and asserts against the **parsed DOM**,
-not against the raw string. That distinction matters: my first attempt used a
-regex and reported false positives, because escaped text such as
-`data-id="a&quot; onmouseover=&quot;…"` contains the characters `onmouseover=`
-while being completely inert. The tests now parse the markup and look for real
-script elements and real event-handler attributes.
-
-Eight of the first ten new tests fail against the original code.
-
-### S-3 — A document could embed an SVG image, contradicting D-010
-**Severity: medium · Verified · Fixed**
-
-`src/model/serialization.ts` accepted `image/svg+xml` in `IMAGE_MIME_TYPES`.
-`src/io/import.ts` does not — its `IMPORTABLE_IMAGE_TYPES` is PNG, JPEG, WebP,
-GIF — and D-010 says why, in unusually direct terms:
-
-> a half-sanitised import is a security hole in an application that otherwise
-> never executes anything from a document
-
-A `.flowshark` file can be written by hand, so refusing SVG at the file dialog
-while accepting it out of a document left exactly the hole that decision
-refuses. The payload flowed to `<image href="data:image/svg+xml;base64,…">` on
-screen and into every export.
-
-I want to be accurate about the severity: SVG loaded through an `<image>`
-element does not execute script per spec, so this was not by itself remote code
-execution. It was a policy the code did not enforce, and an unsanitised
-attacker-controlled document embedded in every file the user exported.
-
-**Fix.** `image/svg+xml` removed. The two lists now match. D-010 gained a
-"Where it is enforced" paragraph naming both, so the next person changing one
-knows to change the other.
-
-### S-4 — Style presets bypassed the document normaliser
-**Severity: low · Verified · Fixed**
-
-Every other part of a loaded document is type-checked into shape. Presets were
-cast through:
-
-```ts
-shape: isObject(raw.shape) ? (raw.shape as StylePreset['shape']) : {},
-```
-
-`applyPreset` then spreads that object straight into an element's style. A
-hand-written preset could put a string where the renderer expects a number, or
-add keys that mean nothing. No injection — everything is still escaped — but it
-contradicts the module's own claim to be "deliberately strict about structure",
-and a preset with `strokeWidth: "wide"` renders a broken shape.
-
-**Fix.** Presets are normalised by running the raw patch through the existing
-style normalisers and keeping only the keys that were actually present. That
-reuses the validation the rest of the file already has rather than adding a
-second one. There were no preset tests at all; there are three now, including a
-round-trip of the built-in presets.
-
-### C-1 — Copy and paste lost embedded images between documents
-**Severity: medium · Verified · Fixed**
-
-`serializeSelection` put the selected elements on the pasteboard but not the
-images they refer to. Pasting into the same document worked by accident, because
-`doc.images` still held the entry. Pasting into another window or another
-document produced a shape whose `imageRef` resolved to nothing — a silently
-blank shape.
-
-**Fix.** The payload carries the referenced images; the paste path routes them
-through `parseDocument` (so they get the same validation as a file) and merges
-them in.
-
-Verified end to end by a new smoke step: drop a PNG, select all, ⌘C, ⌘N, ⌘V,
-and assert an `<image>` with a `data:image/png;base64,` source appears in the
-new document. Against the unfixed code it fails with "the pasted shape lost its
-picture in the new document".
-
-### C-2 — Deleted pictures stayed in the file forever
-**Severity: medium · Verified · Fixed**
-
-`removeElement` deletes the shape but never `doc.images[imageRef]`, and
-`serializeDocument` wrote the whole map. Place a photograph, delete it, save —
-the base64 is still there. Repeat, and the file grows without bound and never
-shrinks.
-
-**Fix.** `serializeDocument` writes only images some element still references.
-I deliberately did **not** prune on delete: undo has to be able to bring the
-picture back. Pruning on the way out reads the document without changing it, so
-undo after a save still restores both the shape and its picture — there is an
-explicit test for that.
-
-### C-3 — PDF drew connector-label borders in the wrong colour
-**Severity: low · Verified · Fixed**
-
-`drawConnector` emits `re B` (fill and stroke) for a bordered label but never
-set the stroke colour, so the border inherited the connector's line colour set
-earlier in the same graphics state. The SVG path uses `label.border` correctly,
-so the PDF drifted from the screen — against the repository's central "one
-drawing path" promise.
-
-**Fix.** Set the stroke to `label.border` before the box. New test asserts the
-last stroke colour before the bordered rectangle is the label's blue and not the
-connector's red.
-
-### P-1 — Every unscoped edit copied and stringified all embedded images
-**Severity: medium · Fixed**
-
-`history.snapshot` did `deepClone(doc.images)` and `history.diff` did
-`JSON.stringify` on the whole image map, on every transaction without a
-`scope`. Adding a shape, deleting, duplicating, grouping and the canvas
-settings are all unscoped. With a 5 MB photograph in the document, adding one
-shape meant deep-cloning and stringifying about 6.7 MB of base64 — twice.
-
-Embedded images are immutable: `import.ts` adds one, `applyPatch` adds or
-removes one, and nothing ever edits an entry in place. I checked every write to
-`.images` to confirm this before relying on it.
-
-**Fix.** The image map is captured with a shallow copy and compared by
-identity. Three new history tests cover restore, no-op detection, and
-replacement, so the weaker comparison cannot silently stop noticing changes.
-
-### P-2 — Binary IPC sends bytes as a JSON number array
-**Severity: medium · Documented, not fixed**
-
-`writeBinaryFile`, `writeTemporaryFile`, and `writeDiagram` all do
-`Array.from(bytes)`. Measured here:
-
-> An 8 MB payload becomes a **28.6 MB** JSON string and costs about **540 ms**
-> of main-thread work before the IPC transfer even starts.
-
-Copying a diagram does this twice, for the PNG and the PDF, on every ⌘C. The
-irony is that `files.rs` already calls this out on the read side:
-
-> The bytes come back as a binary IPC response rather than a JSON array, so
-> importing a photograph does not turn a few megabytes into tens of megabytes
-> of JSON on the way across.
-
-The write side never got the same treatment.
-
-**Why I did not fix it.** The fix changes the IPC contract — the commands would
-take `tauri::ipc::Request` with the path in a header instead of `Vec<u8>` in
-JSON — and it touches Rust I cannot compile or test in this container. Pushing
-an unverifiable change to the signed shell is worse than reporting it. It is a
-contained, well-understood piece of work for someone on a Mac.
-
-### D-1 — README miscounted the shape library
-**Severity: cosmetic · Fixed**
-
-README said "All 27 standard flowchart shapes plus 15 general shapes,
-containers, and annotations". The library has 23 `flowchart`, 15 `general`,
-2 `container`, 2 `annotation` — 42 total. CHANGELOG is right: its enumerated
-list of 27 includes the swimlane, phase, annotation and callout. The README
-sentence put those in the second group as well, so it double-counted. Reworded.
+This is noted not to score a point but because it bears on Finding 4's
+severity: the finding is framed as protecting against a hypothetical future
+renderer injection, and there was an actual one.
 
 ---
 
-## Reported but deliberately not changed
+## Where I disagree with the disposition
 
-These are real observations where I judged a change to be out of scope, riskier
-than the problem, or a design call that is the maintainer's to make.
+The review's recommended disposition is sound and I have followed it. Two
+qualifications.
 
-| # | Observation | Why I left it |
-|---|---|---|
-| 1 | The Rust commands (`read_text_file`, `save_text_atomic`, `write_temp_file`, `share_files`, `begin_file_drag`) take arbitrary paths and do not check that the path came from a dialog. | This is the app's design — it has to open files the user picks — and the frontend is trusted. Worth stating plainly as the thing S-1 would have escalated against; narrowing it is an architectural decision. |
-| 2 | `tauri_plugin_fs` is registered in `lib.rs` but the capability file grants it no permissions, so it is dead weight in the bundle. | Harmless; removing it is a judgement call about future use. |
-| 3 | `TransactionOptions.transient` is documented and implemented but has no caller anywhere. So is the exported `documentMarkers` in `scene.ts`. | Dead code, not a defect. |
-| 4 | Autosave calls `writeDocument`, which can raise a modal "the file on disk changed" confirmation from a timer with no user present. | A genuine UX flaw, but the right answer (defer? skip? toast?) is a product decision. |
-| 5 | The recovery snapshot goes to `localStorage`, whose quota is around 5 MB. An untitled document with a photograph silently fails to snapshot; the failure is caught and swallowed. | D-024 already accepts localStorage for recovery. The silent failure is worth surfacing, but the fix is a product decision. |
-| 6 | `handle_opened_urls` overwrites `PendingOpen` in a loop, so launching by opening several documents at once keeps only the last. | Rust, unverifiable here, and an edge case. |
-| 7 | `CommandRegistry.run` drops any repeat of the same command within 60 ms. | Documented and deliberate, guarding against a menu accelerator firing twice. Noting it because it also swallows genuine fast repeats. |
-| 8 | Store comments say updates coalesce "into one render per frame"; `queueMicrotask` is per microtask, not per frame. `resetMeasureCache` clears a context, not a measurement cache. | Comment inaccuracies with no behavioural effect. |
-| 9 | Vector PDF ignores `options.includeGrid`, which SVG and raster honour. | Probably intentional; changing export output on a guess is not worth it. |
-| 10 | `reorder` uses `Array.includes` inside a filter, so it is quadratic in selection size. | Only reachable with very large selections; not worth the churn. |
+**"Fix Findings 1 and 2 before relying on it for important documents."** Both
+are fixed and tested. I would add the injection above to that list — it is the
+one defect here that can harm someone other than the user, since it travels in
+an exported file.
 
-I also checked, and found nothing wrong with: the atomic-write implementation
-and its path-traversal guard (which has a test), the PDF writer's string
-escaping and cross-reference table, the main-thread dispatch in `macos.rs`, the
-accelerator matching, the paste path's re-parse and id remapping (which was
-already the right design and is why pasted content gets safe ids), the CSP, and
-the release workflow's signing and notarisation checks.
+**On the framing of Finding 6's coverage claim.** The review reads "no
+dedicated test file" as "documentation overstates coverage". For text layout
+and accelerators that inference is wrong, and the README needed no change on
+that point. The rest of Finding 6 — the signing downgrade, the changelog
+overstatement, the unsynced directory — is right and is fixed.
 
 ---
 
-## Changes made
+## Changes made in this round
 
 | File | Change |
 |---|---|
-| `src/util/xml.ts` | **New.** `escapeXml` and `safeIdToken`, shared so `markers.ts` can escape without a circular import. |
-| `src/canvas/scene.ts` | Scene-local generated ids for gradients and clip paths; escape embedded-image fields; `escapeXml` re-exported from the new module. |
-| `src/connectors/markers.ts` | Escape the marker colour; make the marker id injective so two colours cannot share one arrowhead. |
-| `src/model/serialization.ts` | Drop `image/svg+xml`; normalise style presets; prune unreferenced images on save. |
-| `src/commands/history.ts` | Compare and carry embedded images by identity instead of by deep clone and JSON. |
-| `src/app.ts` | Carry referenced images through copy and paste. |
-| `src/io/export-pdf.ts` | Set the stroke colour for a connector label's border. |
-| `tests/hostile-document.test.ts` | **New.** 14 tests: markup injection, definition-name uniqueness, image formats, preset normalisation, image pruning. |
-| `tests/export.test.ts` | PDF label-border colour test. |
-| `tests/history.test.ts` | Three tests for image handling through undo and redo. |
-| `scripts/smoke.mjs` | End-to-end check that a picture survives a copy into a new document. |
-| `README.md` | Shape count corrected; document-format and testing sections brought in line with the code. |
-| `CHANGELOG.md` | Security and Fixed entries under Unreleased. |
-| `DECISIONS.md` | D-010 gained a "Where it is enforced" paragraph. |
-| `.github/workflows/ci.yml` | `permissions: contents: read`. |
+| `src/state/store.ts` | `documentRevision`, advanced in `markChanged`; `markSaved` takes the revision it is reporting on. |
+| `src/app.ts` | Save queue; revision captured with the serialised text; fingerprint-based conflict detection reset on every replacement; silent, revision-gated autosave; singly-encoded recovery snapshot that still reads the old shape. |
+| `src/model/serialization.ts` | `DOCUMENT_LIMITS` and enforcement; numeric clamping; image signature, byte and pixel budgets; `serializeDocument` takes the modification timestamp. |
+| `src/io/import.ts` | `detectImageType`; imports verified against their declared type. |
+| `src/platform/files.ts` | `fileFingerprint`; `fileModifiedAt` removed. |
+| `src-tauri/src/files.rs` | Unique temporary names; parent-directory fsync after rename; write size cap; `file_fingerprint`; `file_modified_at` removed. |
+| `src-tauri/src/lib.rs` | Command registration updated. |
+| `tests/saving.test.ts` | **New.** The save race, deterministically. |
+| `tests/document-limits.test.ts` | **New.** Budgets, clamping, and image signatures. |
+| `tests/serialization.test.ts` | Real image payloads; a mislabelled-format case. |
+| `tests/hostile-document.test.ts` | Real image payloads. |
+| `.github/workflows/release.yml` | A release tag fails without the signing secrets. |
+| `CHANGELOG.md` | New entries; the MVP-scope, signed-bundle and memory-exhaustion claims corrected. |
+| `DECISIONS.md` | The missing brief recorded in "Still open" with what its absence costs; D-024 records what saving depends on. |
+| `README.md` | Document-format and testing sections brought in line. |
+
+Changes from the earlier round — the markup injection, the SVG image format,
+preset normalisation, orphaned images, copy-and-paste of pictures, the PDF
+label border, and the history image comparison — are in the changelog under
+Unreleased and in the two commits preceding this one.
 
 ## Verification
 
-| Check | Before | After |
+| Check | At `977f2fb` | Now |
 |---|---|---|
-| `npm run version:check` | pass | pass |
 | `npm run typecheck` | clean | clean |
-| `npm test` | 98 passing | **116 passing** |
-| `npm run build` | pass | pass |
-| `npm run smoke` | 25 steps pass | **26 steps pass** |
-| `cargo test`, `npm run check:macos` | not runnable in this container | not runnable; no Rust changed |
+| `npm test` | 98 passing | **138 passing** |
+| `npm run build` | passes | passes |
+| `npm run smoke` | 25 steps | **26 steps** |
+| `npm run check:macos` | passes | passes |
+| `cargo fmt --check` | passes | passes |
+| `cargo clippy --all-targets --target aarch64-apple-darwin -D warnings` | clean | clean |
+| `npm audit` | — | 0 vulnerabilities |
+| `cargo test` on this host | blocked | blocked (no GTK); the test bodies are type-checked by the macOS cross-check |
 
-Every fix has a test that fails against the original code. I confirmed that by
-stashing each source change in turn and re-running:
+Every fix has a test that fails against the original code, confirmed by
+stashing each source change in turn and re-running. Of the 22 new tests in
+`saving` and `document-limits`, 18 fail at `977f2fb`; the four that pass are
+the ones asserting behaviour that was already correct and had to stay correct
+(the clean save case, and that view and selection changes do not count as
+document changes).
 
-- `tests/hostile-document.test.ts` — 8 of 10 markup and format tests fail
-  without `scene.ts`, `markers.ts` and `serialization.ts`; the preset and image
-  tests fail without `serialization.ts`.
-- `tests/export.test.ts` — the label-border test fails without `export-pdf.ts`.
-- `npm run smoke` — the new step fails with "the pasted shape lost its picture
-  in the new document" without `app.ts`.
+## Still open after this round
 
-## What I would look at next
-
-1. **P-2**, the binary IPC encoding, on a Mac where it can be measured and
-   tested.
-2. **Gate 1 and Gate 2**, still open in `DECISIONS.md` and still the only two
-   questions this repository cannot answer for itself. Nothing I found changes
-   that assessment; the documentation is honest about it.
-3. A **fuzz corpus for `parseDocument`**. The normaliser is careful and the new
-   tests probe it deliberately, but generated input would cover more of it than
-   hand-written cases.
-4. **One open Dependabot alert** (moderate) on the default branch, surfaced by
-   the push at the end of this session. `npm audit` reports zero
-   vulnerabilities, so it is almost certainly a Cargo advisory somewhere in the
-   transitive GTK/WebKit dependency tree that Tauri pulls in. I could not
-   enumerate it from this session — there is no Dependabot tool available here
-   — so it is unread rather than assessed. It is worth opening
-   `/security/dependabot` and checking whether it reaches any code that
-   actually ships in the macOS bundle.
+1. **Gate 1 and Gate 2** on Apple Silicon hardware — Finding 3, unchanged.
+2. **The project brief and its traceability matrix** — Finding 7.
+3. **The grant-based file authorization redesign** — Finding 4.
+4. **Recovery snapshots in Application Support** rather than `localStorage` —
+   Finding 8, best done with item 3.
+5. **A post-build macOS acceptance job** — Finding 6, blocked on a certificate.
+6. **One Dependabot alert** (moderate), unread from here.

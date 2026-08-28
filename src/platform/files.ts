@@ -207,11 +207,19 @@ export async function revealInFinder(path: string): Promise<void> {
   }
 }
 
-/** Modification time of a file, used to notice external edits. */
-export async function fileModifiedAt(path: string): Promise<number | null> {
+/**
+ * An opaque marker for the file at `path`, used to notice that something else
+ * replaced the document.
+ *
+ * Only ever compared for equality: two different strings mean the file is not
+ * the one that was read. `null` means the question cannot be answered here —
+ * the file is gone, or this is the browser build — and the caller treats that
+ * as "no conflict known" rather than as a conflict.
+ */
+export async function fileFingerprint(path: string): Promise<string | null> {
   if (!isNative()) return null;
   try {
-    return await invoke<number>('file_modified_at', { path });
+    return await invoke<string>('file_fingerprint', { path });
   } catch {
     return null;
   }

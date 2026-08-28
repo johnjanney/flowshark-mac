@@ -141,6 +141,7 @@ export class Store {
   private changed = new Set<StateSlice>();
   private notifyScheduled = false;
   private batchDepth = 0;
+  private revision = 0;
 
   constructor(document: FlowsharkDocument = createEmptyDocument()) {
     this.state = {
@@ -175,6 +176,19 @@ export class Store {
     return this.state;
   }
 
+  /**
+   * A counter that advances every time the document changes.
+   *
+   * Saving is asynchronous and the editor stays live while it runs, so
+   * "is this document still the one I serialised?" cannot be answered by the
+   * dirty flag alone — the flag is a boolean and the write clears it. Capturing
+   * the revision before a write and comparing it afterwards is what stops an
+   * edit made mid-save from being marked as saved and then lost.
+   */
+  get documentRevision(): number {
+    return this.revision;
+  }
+
   get document(): FlowsharkDocument {
     return this.state.document;
   }
@@ -201,6 +215,11 @@ export class Store {
 
   markChanged(...slices: StateSlice[]): void {
     for (const slice of slices) this.changed.add(slice);
+    // Every path that changes the document funnels through here, so this is
+    // the one place the revision can be advanced without a caller forgetting.
+    // It reads the argument rather than the pending set, which still holds
+    // earlier slices until the next flush and would double-count.
+    if (slices.includes('document')) this.revision += 1;
     this.flush();
   }
 
@@ -275,9 +294,18 @@ export class Store {
     this.markChanged('document', 'selection', 'history', 'file', 'ui');
   }
 
-  markSaved(path: string): void {
+  /**
+   * Record that `path` now holds the document as it stood at `savedRevision`.
+   *
+   * The dirty flag is cleared only when nothing has changed since that
+   * revision. The editor stays live while a save is in flight, so an edit made
+   * during the write is still unsaved when the write finishes; clearing the
+   * flag unconditionally would hide it from the close prompt and from
+   * automatic saving, and the edit would be lost.
+   */
+  markSaved(path: string, savedRevision: number): void {
     this.state.file.path = path;
-    this.state.file.dirty = false;
+    this.state.file.dirty = this.revision !== savedRevision;
     this.addRecentFile(path);
     this.markChanged('file');
   }
