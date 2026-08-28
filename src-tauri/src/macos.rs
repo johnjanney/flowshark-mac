@@ -34,6 +34,8 @@ use objc2_foundation::{
 use serde::Deserialize;
 use tauri::{AppHandle, Manager, WebviewWindow};
 
+use crate::grants::{Access, Grants};
+
 /// The Uniform Type Identifier for SVG. AppKit has no constant for it.
 const SVG_UTI: &str = "public.svg-image";
 
@@ -178,18 +180,35 @@ fn file_urls(paths: &[String]) -> Retained<NSArray<AnyObject>> {
     NSArray::from_slice(&objects)
 }
 
+/// Turn grant tokens into the paths they stand for.
+///
+/// Sharing and dragging hand a real file to another application, so they are
+/// exactly the operations that must not accept a pathname the web layer chose.
+fn resolve_all(app: &AppHandle, tokens: &[String], what: &str) -> Result<Vec<String>, String> {
+    if tokens.is_empty() {
+        return Err(format!("There is nothing to {what}."));
+    }
+    let grants = app.state::<Grants>();
+    tokens
+        .iter()
+        .map(|token| {
+            grants
+                .resolve(token, Access::Read)
+                .map(|path| path.to_string_lossy().to_string())
+        })
+        .collect()
+}
+
 /// Show the system share sheet for `paths`, anchored near (`x`, `y`).
 #[tauri::command]
 pub fn share_files(
     app: AppHandle,
     window: WebviewWindow,
-    paths: Vec<String>,
+    tokens: Vec<String>,
     x: f64,
     y: f64,
 ) -> Result<(), String> {
-    if paths.is_empty() {
-        return Err("There is nothing to share.".to_string());
-    }
+    let paths = resolve_all(&app, &tokens, "share")?;
     on_main_thread(&app, move |marker| {
         let view = content_view(&window)?;
         let items = file_urls(&paths);
@@ -295,13 +314,11 @@ fn drag_event(
 pub fn begin_file_drag(
     app: AppHandle,
     window: WebviewWindow,
-    paths: Vec<String>,
+    tokens: Vec<String>,
     x: f64,
     y: f64,
 ) -> Result<(), String> {
-    if paths.is_empty() {
-        return Err("There is nothing to drag.".to_string());
-    }
+    let paths = resolve_all(&app, &tokens, "drag")?;
     on_main_thread(&app, move |marker| {
         let view = content_view(&window)?;
         let origin = flip_into_view(&view, x, y);

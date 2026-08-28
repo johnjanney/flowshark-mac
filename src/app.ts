@@ -91,7 +91,12 @@ import {
   DOCUMENT_EXTENSION,
   askToDiscardChanges,
   chooseSavePath,
+  clearRecentDocuments,
   fileFingerprint,
+  grantRecentDocument,
+  recentDocuments,
+  revokeHandle,
+  type FileHandle,
   openDocumentDialog,
   openImageDialog,
   readDocument,
@@ -157,6 +162,14 @@ export class FlowSharkApp {
    * browser build, where there is no filesystem to ask.
    */
   private lastKnownFingerprint: string | null = null;
+  /**
+   * Permission to read and write the open document.
+   *
+   * `store.file.path` is the same file's path, kept for the title bar and the
+   * recent-documents menu. Showing a path is not permission to use it, so the
+   * two are deliberately separate: this is what every read and write quotes.
+   */
+  private fileHandle: FileHandle | null = null;
   /** Serialises writes so two saves can never be in flight at once. */
   private saveQueue: Promise<void> = Promise.resolve();
   /** Document revision the last recovery snapshot captured. */
@@ -239,20 +252,25 @@ export class FlowSharkApp {
     if (!installed) this.fallbackMenu.mount();
     this.nativeMenu.onRecentFiles(
       () => this.recentEntries(),
-      (path) => void this.openPath(path),
+      (path) => void this.openRecent(path),
     );
     this.fallbackMenu.onRecentFiles(
       () => this.recentEntries(),
-      (path) => void this.openPath(path),
+      (path) => void this.openRecent(path),
     );
 
-    await onOpenFileRequest((path) => void this.openPath(path));
-    await onFileDrop((event) => void this.handleFileDrop(event.paths, event.position));
+    // Rust keeps the authoritative list of documents the user has chosen, so
+    // the menu is seeded from there rather than from browser storage, which
+    // would let a stale entry claim a permission that was never granted.
+    await this.seedRecentDocuments();
+
+    await onOpenFileRequest((handle) => void this.openHandle(handle));
+    await onFileDrop((event) => void this.handleFileDrop(event.files, event.position));
     const launchFile = await pendingLaunchFile();
 
     this.onResize();
     if (launchFile) {
-      await this.openPath(launchFile);
+      await this.openHandle(launchFile);
     } else if (!(await this.offerRecovery())) {
       const template = getTemplate('basic-flowchart');
       if (template) this.loadTemplate(template, false);
@@ -272,6 +290,13 @@ export class FlowSharkApp {
     document.documentElement.dataset.appearance = preferences.appearance;
     document.documentElement.dataset.reduceMotion = preferences.reduceMotion;
     this.store.setUi({ pendingConnector: preferences.defaultConnectorKind });
+  }
+
+  /** Replace the remembered documents with the ones Rust will actually grant. */
+  private async seedRecentDocuments(): Promise<void> {
+    if (!isNative()) return;
+    const known = await recentDocuments();
+    this.store.setRecentFiles(known);
   }
 
   private recentEntries(): Array<{ path: string; title: string }> {
@@ -485,6 +510,7 @@ export class FlowSharkApp {
 
   private loadTemplate(template: TemplateDefinition, markDirty: boolean): void {
     this.lastKnownFingerprint = null;
+    void this.replaceHandle(null);
     this.store.replaceDocument(template.build(), null, markDirty);
     this.renderer.renderScene();
     this.zoomToFit();
@@ -494,6 +520,7 @@ export class FlowSharkApp {
   async newDocument(): Promise<void> {
     if (!(await this.confirmDiscard())) return;
     this.lastKnownFingerprint = null;
+    void this.replaceHandle(null);
     this.store.replaceDocument(createEmptyDocument(), null, false);
     this.renderer.renderScene();
     this.store.setView({ zoom: 1, offset: { x: -80, y: -80 } });
@@ -514,48 +541,77 @@ export class FlowSharkApp {
     try {
       const result = await openDocumentDialog();
       if (!result) return;
-      await this.applyLoadedDocument(result.contents, result.path);
+      await this.applyLoadedDocument(result.contents, result.handle);
     } catch (error) {
       await this.reportError('The document could not be opened.', error);
     }
   }
 
-  async openPath(path: string): Promise<void> {
+  /** Open a document FlowShark has been granted permission to read. */
+  async openHandle(handle: FileHandle): Promise<void> {
     if (!(await this.confirmDiscard())) return;
     try {
-      const contents = await readDocument(path);
-      await this.applyLoadedDocument(contents, path);
+      const contents = await readDocument(handle);
+      await this.applyLoadedDocument(contents, handle);
     } catch (error) {
       await this.reportError('The document could not be opened.', error);
     }
   }
 
-  private async applyLoadedDocument(contents: string, path: string): Promise<void> {
+  /**
+   * Open something from the recent-documents menu.
+   *
+   * The path goes to Rust to be exchanged for permission, and Rust refuses
+   * unless it already knows the user chose that file. A menu entry is a
+   * reminder, not an authorisation.
+   */
+  async openRecent(path: string): Promise<void> {
+    const handle = await grantRecentDocument(path);
+    if (!handle) {
+      await this.reportError(
+        'That document can no longer be opened from this menu.',
+        new Error(`FlowShark has no record of you choosing ${path}. Open it again.`),
+      );
+      return;
+    }
+    await this.openHandle(handle);
+  }
+
+  private async applyLoadedDocument(contents: string, handle: FileHandle): Promise<void> {
     const doc = parseDocument(contents);
     // Clear first and capture before returning. Leaving the previous
     // document's fingerprint in place, even briefly, would have the next save
     // compare this file against the last one.
     this.lastKnownFingerprint = null;
-    this.store.replaceDocument(doc, path, false);
+    void this.replaceHandle(handle);
+    this.store.replaceDocument(doc, handle.path, false);
     this.renderer.renderScene();
     this.zoomToFit();
     this.refreshAll();
-    this.lastKnownFingerprint = await fileFingerprint(path);
+    this.lastKnownFingerprint = await fileFingerprint(handle);
     void this.nativeMenu.rebuild();
     showToast(`Opened ${doc.meta.title}.`);
   }
 
+  /** Take permission for a new document and give up the previous one. */
+  private async replaceHandle(handle: FileHandle | null): Promise<void> {
+    const previous = this.fileHandle;
+    this.fileHandle = handle;
+    if (previous && previous.token !== handle?.token) await revokeHandle(previous);
+  }
+
   async save(): Promise<boolean> {
-    const path = this.store.getState().file.path;
-    if (!path) return this.saveAs();
-    return this.writeDocument(path);
+    const handle = this.fileHandle;
+    if (!handle) return this.saveAs();
+    return this.writeDocument(handle);
   }
 
   async saveAs(): Promise<boolean> {
     const suggested = `${this.store.document.meta.title || 'Untitled'}.${DOCUMENT_EXTENSION}`;
-    const path = await chooseSavePath(suggested);
-    if (!path) return false;
-    return this.writeDocument(path);
+    const handle = await chooseSavePath(suggested);
+    if (!handle) return false;
+    await this.replaceHandle(handle);
+    return this.writeDocument(handle);
   }
 
   /**
@@ -578,19 +634,22 @@ export class FlowSharkApp {
     return result;
   }
 
-  private writeDocument(path: string, options: { silent?: boolean } = {}): Promise<boolean> {
-    return this.enqueueSave(() => this.performWrite(path, options));
+  private writeDocument(
+    handle: FileHandle,
+    options: { silent?: boolean } = {},
+  ): Promise<boolean> {
+    return this.enqueueSave(() => this.performWrite(handle, options));
   }
 
   private async performWrite(
-    path: string,
+    handle: FileHandle,
     options: { silent?: boolean } = {},
   ): Promise<boolean> {
     const silent = options.silent === true;
     try {
       // Warn if the file changed underneath us — iCloud Drive and Dropbox do
       // this, and silently overwriting someone else's edit is not acceptable.
-      if (await this.fileChangedUnderneath(path)) {
+      if (await this.fileChangedUnderneath(handle)) {
         if (silent) {
           // An automatic save must not put a modal question on screen with
           // nobody there to answer it. Leave the document dirty and say so;
@@ -615,12 +674,12 @@ export class FlowSharkApp {
       const modified = new Date().toISOString();
       const text = serializeDocument(this.store.document, true, modified);
 
-      await writeTextFile(path, text);
+      await writeTextFile(handle, text);
 
       // Keep the in-memory timestamp in step with what actually reached disk.
       this.store.document.meta.modified = modified;
-      this.store.markSaved(path, revision);
-      this.lastKnownFingerprint = await fileFingerprint(path);
+      this.store.markSaved(handle.path, revision);
+      this.lastKnownFingerprint = await fileFingerprint(handle);
       if (this.store.documentRevision === revision) this.clearRecovery();
       void this.nativeMenu.rebuild();
       if (!silent) showToast('Saved.');
@@ -643,9 +702,9 @@ export class FlowSharkApp {
    * a sync service resolving a conflict or a restore from backup produces
    * exactly those. Comparing a fingerprint catches any difference.
    */
-  private async fileChangedUnderneath(path: string): Promise<boolean> {
+  private async fileChangedUnderneath(handle: FileHandle): Promise<boolean> {
     if (this.lastKnownFingerprint === null) return false;
-    const current = await fileFingerprint(path);
+    const current = await fileFingerprint(handle);
     // A file that cannot be read is not evidence of a conflict; the write
     // itself will report the real problem.
     if (current === null) return false;
@@ -653,11 +712,11 @@ export class FlowSharkApp {
   }
 
   async revert(): Promise<void> {
-    const path = this.store.getState().file.path;
-    if (!path) return;
+    const handle = this.fileHandle;
+    if (!handle) return;
     if (!(await askToDiscardChanges(this.store.document.meta.title))) return;
     try {
-      await this.applyLoadedDocument(await readDocument(path), path);
+      await this.applyLoadedDocument(await readDocument(handle), handle);
     } catch (error) {
       await this.reportError('The document could not be reloaded.', error);
     }
@@ -703,9 +762,10 @@ export class FlowSharkApp {
     const revision = this.store.documentRevision;
     if (revision === this.lastSnapshotRevision) return;
 
-    if (state.file.path) {
+    if (this.fileHandle) {
+      const handle = this.fileHandle;
       this.lastSnapshotRevision = revision;
-      void this.writeDocument(state.file.path, { silent: true }).then((written) => {
+      void this.writeDocument(handle, { silent: true }).then((written) => {
         // A refused or failed automatic save must be retried on the next tick,
         // not treated as done.
         if (!written) this.lastSnapshotRevision = -1;
@@ -765,6 +825,7 @@ export class FlowSharkApp {
       const recovered =
         typeof document === 'string' ? parseDocument(document) : fromRaw(document);
       this.lastKnownFingerprint = null;
+      void this.replaceHandle(null);
       this.store.replaceDocument(recovered, null, true);
       showToast('Recovered your unsaved diagram.');
       return true;
@@ -798,23 +859,23 @@ export class FlowSharkApp {
     const selection = this.store.selection;
     try {
       const name = exportFileName(this.store.document, request.format);
-      const path = await chooseSavePath(name, request.format);
-      if (!path) return;
+      const target = await chooseSavePath(name, request.format);
+      if (!target) return;
 
       if (request.format === 'svg') {
         const { svg } = buildStandaloneSvg(this.store.document, options, selection);
-        await writeTextFile(path, svg);
+        await writeTextFile(target, svg);
       } else if (request.format === 'pdf') {
         const result = await exportPdf(this.store.document, options, selection, 'auto');
-        await writeBinaryFile(path, result.bytes, 'application/pdf');
+        await writeBinaryFile(target, result.bytes, 'application/pdf');
         for (const warning of result.warnings) showToast(warning, 'warning', 7000);
       } else {
         const result = await exportRaster(this.store.document, options, selection, request.format);
-        await writeBinaryFile(path, result.bytes, result.mimeType);
+        await writeBinaryFile(target, result.bytes, result.mimeType);
       }
 
-      showToast(`Exported ${path.split('/').pop()}.`);
-      await revealInFinder(path);
+      showToast(`Exported ${target.path.split('/').pop()}.`);
+      await revealInFinder(target);
     } catch (error) {
       await this.reportError('The diagram could not be exported.', error);
     }
@@ -889,8 +950,8 @@ export class FlowSharkApp {
       const selection = this.store.selection;
       const doc = this.store.document;
       const png = await exportRaster(doc, this.handoffOptions(false), selection, 'png');
-      const path = await writeTemporaryFile(exportFileName(doc, 'png'), png.bytes);
-      await shareFiles([path], this.commandAnchor('file.share'));
+      const file = await writeTemporaryFile(exportFileName(doc, 'png'), png.bytes);
+      await shareFiles([file], this.commandAnchor('file.share'));
     } catch (error) {
       await this.reportError('The diagram could not be shared.', error);
     }
@@ -903,7 +964,7 @@ export class FlowSharkApp {
    * disk by the time the pointer has moved far enough to start a drag, and
    * because Keynote, Pages, and Mail all embed it as vector art.
    */
-  private async prepareDragFile(): Promise<string> {
+  private async prepareDragFile(): Promise<FileHandle> {
     const doc = this.store.document;
     const pdf = await exportPdf(doc, this.handoffOptions(false), this.store.selection, 'auto');
     return writeTemporaryFile(exportFileName(doc, 'pdf'), pdf.bytes);
@@ -918,7 +979,7 @@ export class FlowSharkApp {
    */
   private makeDragSource(node: HTMLElement): void {
     if (!canShare()) return;
-    let pending: Promise<string> | null = null;
+    let pending: Promise<FileHandle> | null = null;
     let origin: { x: number; y: number } | null = null;
     let dragged = false;
 
@@ -937,7 +998,7 @@ export class FlowSharkApp {
       dragged = true;
       finish();
       void file
-        .then((path) => beginFileDrag([path], from))
+        .then((file) => beginFileDrag([file], from))
         .catch((error) => void this.reportError('The diagram could not be dragged out.', error));
     };
 
@@ -1243,6 +1304,10 @@ export class FlowSharkApp {
         title: 'Clear Menu',
         run: () => {
           store.clearRecentFiles();
+          // Clearing the menu also withdraws the ability to reopen those
+          // documents without choosing them again, which is the point: the
+          // entries were the record of permission, not just a convenience.
+          void clearRecentDocuments();
           void this.nativeMenu.rebuild();
         },
       },
@@ -1871,13 +1936,13 @@ export class FlowSharkApp {
    * is placed where it was dropped, and anything else is reported.
    */
   private async handleFileDrop(
-    paths: readonly string[],
+    files: readonly FileHandle[],
     position: { x: number; y: number },
   ): Promise<void> {
-    if (paths.length === 0) return;
-    const documents = paths.filter(isDocumentPath);
+    if (files.length === 0) return;
+    const documents = files.filter((file) => isDocumentPath(file.path));
     if (documents.length > 0) {
-      await this.openPath(documents[0]);
+      await this.openHandle(documents[0]);
       if (documents.length > 1) {
         showToast('Only the first FlowShark document was opened.', 'warning');
       }
@@ -1891,14 +1956,14 @@ export class FlowSharkApp {
     });
 
     let placed = 0;
-    for (const path of paths) {
-      const mimeType = imageTypeForPath(path);
+    for (const file of files) {
+      const mimeType = imageTypeForPath(file.path);
       if (!mimeType) continue;
       try {
-        const bytes = await readFileBytes(path);
+        const bytes = await readFileBytes(file);
         await importImage(this.store, bytes, mimeType, {
           at: { x: at.x + placed * 24, y: at.y + placed * 24 },
-          name: path.split('/').pop() ?? 'Image',
+          name: file.path.split('/').pop() ?? 'Image',
         });
         placed += 1;
       } catch (error) {
@@ -1922,7 +1987,7 @@ export class FlowSharkApp {
     for (const file of Array.from(files)) {
       if (isDocumentPath(file.name)) {
         if (!(await this.confirmDiscard())) return;
-        await this.applyLoadedDocument(await file.text(), file.name);
+        await this.applyLoadedDocument(await file.text(), { token: null, path: file.name });
         return;
       }
       const mimeType = file.type || imageTypeForPath(file.name) || '';

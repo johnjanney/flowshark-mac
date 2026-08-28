@@ -4,6 +4,7 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder}
 #[cfg(target_os = "macos")]
 use tauri::{Emitter, Url};
 
+use crate::grants::{FileGrant, Grants};
 use crate::PendingOpen;
 #[cfg(target_os = "macos")]
 use crate::OPEN_FILE_EVENT;
@@ -52,7 +53,7 @@ pub fn print_window(window: WebviewWindow) -> Result<(), String> {
 
 /// Hand the front end the file the app was launched with, if any.
 #[tauri::command]
-pub fn take_pending_open_file(app: AppHandle) -> Option<String> {
+pub fn take_pending_open_file(app: AppHandle) -> Option<FileGrant> {
     let state = app.state::<PendingOpen>();
     let mut pending = state.0.lock().ok()?;
     pending.take()
@@ -67,19 +68,23 @@ pub fn handle_opened_urls(app: &AppHandle, urls: &[Url]) {
     for url in urls {
         let path = if url.scheme() == "file" {
             match url.to_file_path() {
-                Ok(path) => path.to_string_lossy().to_string(),
+                Ok(path) => path,
                 Err(()) => continue,
             }
         } else {
             continue;
         };
 
+        // The Finder chose this file, so it is a grant the same way a panel
+        // choice is: the web layer is told what it may open, not asked.
+        let grant = app.state::<Grants>().issue_document(path);
+
         if app.webview_windows().is_empty() {
             if let Ok(mut pending) = app.state::<PendingOpen>().0.lock() {
-                *pending = Some(path);
+                *pending = Some(grant);
             }
             continue;
         }
-        let _ = app.emit(OPEN_FILE_EVENT, path);
+        let _ = app.emit(OPEN_FILE_EVENT, grant);
     }
 }

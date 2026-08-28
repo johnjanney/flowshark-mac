@@ -142,3 +142,24 @@ describe('serialising the document', () => {
     expect(written.meta.modified).toBe(stamp);
   });
 });
+
+describe('the recent-documents list', () => {
+  it('can be replaced by the authoritative native list', () => {
+    // On macOS the list of documents the user has chosen lives in Rust,
+    // because that is the only side that can vouch for the claim. The store
+    // holds a copy for the menu to draw, seeded at start-up.
+    const store = new Store(createEmptyDocument());
+    store.markSaved('/tmp/one.flowshark', store.documentRevision);
+    store.markSaved('/tmp/two.flowshark', store.documentRevision);
+    expect(store.getState().file.recent).toContain('/tmp/one.flowshark');
+
+    store.setRecentFiles(['/tmp/three.flowshark']);
+    expect(store.getState().file.recent).toEqual(['/tmp/three.flowshark']);
+  });
+
+  it('does not let the copy grow past the menu length', () => {
+    const store = new Store(createEmptyDocument());
+    store.setRecentFiles(Array.from({ length: 100 }, (_, i) => `/tmp/${i}.flowshark`));
+    expect(store.getState().file.recent.length).toBeLessThanOrEqual(12);
+  });
+});

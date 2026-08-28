@@ -10,6 +10,7 @@
  */
 
 import { isNative } from './environment';
+import type { FileHandle } from './files';
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke: call } = await import('@tauri-apps/api/core');
@@ -29,18 +30,21 @@ export function canShare(): boolean {
 export async function writeTemporaryFile(
   name: string,
   bytes: Uint8Array,
-): Promise<string> {
+): Promise<FileHandle> {
   if (!isNative()) throw new Error('Temporary files need the macOS application.');
-  return invoke<string>('write_temp_file', { name, contents: Array.from(bytes) });
+  // Rust wrote the file, so Rust is the one that can vouch for it: the grant
+  // comes back with it rather than being asked for by path afterwards.
+  return invoke<FileHandle>('write_temp_file', { name, contents: Array.from(bytes) });
 }
 
 /** Present the system share sheet for `paths`, anchored near a screen point. */
 export async function shareFiles(
-  paths: readonly string[],
+  files: readonly FileHandle[],
   anchor: { x: number; y: number },
 ): Promise<void> {
   if (!isNative()) throw new Error('Sharing needs the macOS application.');
-  await invoke('share_files', { paths: [...paths], x: anchor.x, y: anchor.y });
+  const tokens = files.map((file) => file.token).filter((t): t is string => !!t);
+  await invoke('share_files', { tokens, x: anchor.x, y: anchor.y });
 }
 
 /**
@@ -50,9 +54,10 @@ export async function shareFiles(
  * be called from a pointer handler, not after an await that outlives it.
  */
 export async function beginFileDrag(
-  paths: readonly string[],
+  files: readonly FileHandle[],
   from: { x: number; y: number },
 ): Promise<void> {
   if (!isNative()) throw new Error('Dragging out needs the macOS application.');
-  await invoke('begin_file_drag', { paths: [...paths], x: from.x, y: from.y });
+  const tokens = files.map((file) => file.token).filter((t): t is string => !!t);
+  await invoke('begin_file_drag', { tokens, x: from.x, y: from.y });
 }

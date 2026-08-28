@@ -1,8 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The smallest set of capabilities FlowShark needs. Anything not listed here is unavailable to the front end.",
-  "windows": ["main", "main-*"],
+  "description": "The smallest set of capabilities FlowShark needs. Anything not listed here is unavailable to the front end. The Open and Save panels and the reveal-in-Finder action are deliberately absent: they are presented from Rust so the web layer receives a capability for the file the user chose rather than a pathname it could have chosen itself.",
+  "windows": [
+    "main",
+    "main-*"
+  ],
   "permissions": [
     "core:default",
     "core:menu:default",
@@ -11,15 +14,12 @@
     "core:window:allow-set-focus",
     "core:window:allow-start-dragging",
     "core:event:default",
-    "dialog:allow-open",
-    "dialog:allow-save",
     "dialog:allow-message",
     "dialog:allow-ask",
     "dialog:allow-confirm",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-write-image",
-    "clipboard-manager:allow-read-image",
-    "opener:allow-reveal-item-in-dir"
+    "clipboard-manager:allow-read-image"
   ]
 }
