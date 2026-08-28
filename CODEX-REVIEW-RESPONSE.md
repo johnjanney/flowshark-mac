@@ -486,6 +486,44 @@ save case, and that view and selection changes do not count as document
 changes). The five tests added for the bot review's findings fail against the
 commit that preceded them.
 
+## The Dependabot alert, now assessed
+
+I listed this as unread rather than assessed. It is worth closing properly,
+because the answer is "does not affect the product" and that is not the same as
+"ignored".
+
+There is no Dependabot API available from this session, so I matched
+`src-tauri/Cargo.lock` against a fresh clone of the RustSec advisory database
+directly. Of 521 locked crates, 18 match an advisory — but only **one is an
+actual advisory** rather than an "unmaintained" notice:
+
+**`glib` 0.18.5 — RUSTSEC-2024-0429**, unsoundness in the `Iterator` impls for
+`VariantStrIter`. Its alias is `GHSA-wrw7-89jp-8q8g`, and a GHSA alias is what
+Dependabot surfaces, so this is almost certainly the moderate alert.
+
+**It does not reach the shipped application.** `cargo tree -i glib` for
+`aarch64-apple-darwin` returns nothing at all: `glib` arrives only through the
+GTK stack, which Tauri uses on Linux and not on macOS, where it uses WebKit and
+AppKit instead. FlowShark builds only Apple Silicon targets. The crate is in
+the lock file because a lock file covers every platform, and it is never
+compiled by any build or CI job this repository runs.
+
+The same is true of every GTK-stack entry — `atk`, `gdk`, `gdkx11`,
+`gdkwayland-sys`, `gtk`, `gtk-sys`, `gtk3-macros` and their `-sys` crates, all
+"unmaintained" notices, none in the macOS tree — and of `proc-macro-error`.
+
+Six unmaintained notices *are* in the macOS tree: `dirs` 6.0.0 and the five
+`unic-*` crates. All are informational — a crate no longer receiving updates,
+with no known vulnerability — and all arrive transitively through Tauri rather
+than through anything this repository chose.
+
+**What is still worth doing.** Nothing here needs a fix, but nothing catches
+the next one either. A `cargo audit` or `cargo deny` job would, and I have not
+added one, because it needs a decision I should not make alone: run unfiltered
+and the job is permanently red on Linux-only GTK notices that cannot affect the
+product; filter them and someone has to own the ignore list. That is a
+maintainer's call about how the check should behave, not a defect.
+
 ## Still open after this round
 
 1. **Gate 1 and Gate 2** on Apple Silicon hardware — Finding 3, unchanged.
@@ -494,4 +532,5 @@ commit that preceded them.
 4. **Recovery snapshots in Application Support** rather than `localStorage` —
    Finding 8, best done with item 3.
 5. **A post-build macOS acceptance job** — Finding 6, blocked on a certificate.
-6. **One Dependabot alert** (moderate), unread from here.
+6. **A repeatable dependency audit.** The one open Dependabot alert is now
+   assessed (below); nothing checks for the next one automatically.
