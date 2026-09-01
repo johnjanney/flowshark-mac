@@ -227,10 +227,27 @@ function orthogonalRoute(
     if (polylineBlocked([s, ...middle, e], obstacles)) {
       middle = detourMiddle(s, e, 'x', obstacles) ?? middle;
     }
-  } else if (startHorizontal) {
-    middle = [{ x: e.x, y: s.y }];
   } else {
-    middle = [{ x: s.x, y: e.y }];
+    // One stub horizontal and one vertical: a single corner joins them, and
+    // there are two of those. Carrying on along the start's own axis is the
+    // tidier one, so it is the default; the other, and then a three-sided
+    // detour, are what is left when something sits across it.
+    const alongStart = startHorizontal ? { x: e.x, y: s.y } : { x: s.x, y: e.y };
+    middle = [alongStart];
+    if (polylineBlocked([s, ...middle, e], obstacles)) {
+      const alongEnd = startHorizontal ? { x: s.x, y: e.y } : { x: e.x, y: s.y };
+      const fallbacks = [
+        [alongEnd],
+        detourMiddle(s, e, 'x', obstacles),
+        detourMiddle(s, e, 'y', obstacles),
+      ];
+      for (const candidate of fallbacks) {
+        if (candidate && !polylineBlocked([s, ...candidate, e], obstacles)) {
+          middle = candidate;
+          break;
+        }
+      }
+    }
   }
 
   return simplify([start, s, ...middle, e, end]);
@@ -652,21 +669,29 @@ export function routeConnector(
   } else if (kind === 'curved') {
     // The spline normally runs straight through the bend points. It only
     // borrows an orthogonal spine when the user asked the connector to route
-    // around shapes and the direct line would cut through one, so ticking the
-    // box does not change a curve that was already clear.
+    // around shapes and the curve would cut through one, so ticking the box
+    // does not change a curve that was already clear.
+    //
+    // What gets tested is the sampled curve, not the straight line between
+    // the ends: a diagonal chord's bounding box covers ground the curve never
+    // goes near, and the curve in turn swings outside that box. Testing the
+    // chord both invents obstacles and misses them.
     const direct = simplify([source.point, ...waypoints, target.point]);
-    points =
-      waypoints.length === 0 && polylineBlocked(direct, obstacles)
-        ? splineSpine(
-            orthogonalRoute(
-              source.point,
-              startDirection,
-              target.point,
-              endDirection,
-              obstacles,
-            ),
-          )
-        : direct;
+    const blocked =
+      waypoints.length === 0 &&
+      obstacles.length > 0 &&
+      polylineBlocked(curvedPath(direct, startDirection, endDirection).sampled, obstacles);
+    points = blocked
+      ? splineSpine(
+          orthogonalRoute(
+            source.point,
+            startDirection,
+            target.point,
+            endDirection,
+            obstacles,
+          ),
+        )
+      : direct;
   } else if (kind === 'step') {
     points =
       waypoints.length > 0
