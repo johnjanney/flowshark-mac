@@ -20,17 +20,6 @@ on:
   # most, since the advisory may have been published after the branch was
   # last pushed.
   workflow_call:
-    inputs:
-      ref:
-        # The caller passes the ref it is about to build, so the audit is of
-        # the same code. A release can be dispatched by hand against an older
-        # tag, where the caller's own ref is the branch it was dispatched
-        # from and auditing that would prove nothing about the build. Empty
-        # for every other trigger, which leaves checkout on its default.
-        description: 'Ref to audit. Defaults to the ref this workflow runs on.'
-        type: string
-        required: false
-        default: ''
 
 concurrency:
   group: audit-${{ github.ref }}
@@ -46,9 +35,19 @@ jobs:
     # there is nothing to gain from the macOS runners here.
     runs-on: ubuntu-latest
     steps:
+      # Deliberately no `ref:` here. Taking one as an input would let a
+      # privileged run — the weekly schedule and manual dispatch both carry
+      # write access to the default branch's caches — check out and run
+      # tooling over a ref chosen by the caller, which CodeQL flags as cache
+      # poisoning and is right to. A called workflow checks out the caller's
+      # own ref, so the release gate audits the tag it is about to build.
+      #
+      # The gap that leaves: `release.yml` can be dispatched by hand against
+      # an older tag, and there the caller's ref is the branch it was
+      # dispatched from rather than that tag. Closing it needs the release
+      # workflow to stop taking an arbitrary tag, not this workflow to start
+      # trusting one.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
 

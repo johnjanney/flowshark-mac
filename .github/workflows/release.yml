@@ -20,8 +20,6 @@ jobs:
   # single definition of what "audited" means.
   advisories:
     uses: ./.github/workflows/audit.yml
-    with:
-      ref: ${{ github.event.inputs.tag || github.ref }}
 
   macos:
     name: Signed and notarised DMG
