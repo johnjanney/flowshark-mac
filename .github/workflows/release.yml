@@ -13,8 +13,19 @@ permissions:
   contents: write
 
 jobs:
+  # A tag push does not match `push.branches` in the audit workflow, so
+  # without this a release would be built, signed, notarised and published
+  # having never been audited — and a release is the one build where that
+  # matters. Calling the workflow rather than repeating its steps keeps a
+  # single definition of what "audited" means.
+  advisories:
+    uses: ./.github/workflows/audit.yml
+    with:
+      ref: ${{ github.event.inputs.tag || github.ref }}
+
   macos:
     name: Signed and notarised DMG
+    needs: advisories
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4

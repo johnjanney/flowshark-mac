@@ -889,15 +889,23 @@ deferred on the grounds that it forced a choice: run it unfiltered and it is
 permanently red on advisories that cannot affect a macOS build, or filter it
 and someone owns an ignore list.
 
-**Decision.** Run `cargo audit` with its own defaults, on every push and once a
-week, in a workflow of its own.
+**Decision.** Run `cargo audit` and `npm audit` with their own defaults, on
+every push and once a week, in a workflow of its own, which the release
+workflow calls as a gate.
 
 That choice turns out not to exist. `cargo audit` fails on a `vulnerability`
 and reports `unmaintained` and `unsound` notices without failing. The tree has
 seventeen notices and no vulnerability, so the job is green today, unfiltered,
-with no ignore list for anyone to own. The weekly run is the part that earns
-its place: an advisory can be published against a lock file that has not
-changed in months, and nothing else here would notice.
+with no ignore list for anyone to own. `npm audit` is held to the same rule and
+covers the other lock file, dev dependencies included: a compromised build tool
+reaches the artefact as surely as a runtime one.
+
+Two of the three triggers earn their place separately. The weekly run catches
+an advisory published against a lock file that has not changed in months, which
+nothing else here would notice — that is how the `glib` one arrived. The
+release gate catches the rest: a tag push does not match `push.branches`, so
+without it the one build that is signed, notarised and published to users would
+be the only build never audited.
 
 **Consequences.** The job's promise is exactly "no known vulnerability in the
 dependency tree", which is the promise worth gating a merge on. A new

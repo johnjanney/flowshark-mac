@@ -14,6 +14,23 @@ on:
     # the hour, where every repository's cron lands at once.
     - cron: '17 6 * * 1'
   workflow_dispatch:
+  # The release workflow calls this as a gate. `push.branches` above matches
+  # branch refs only, so a release tag would otherwise be built, signed and
+  # published without ever being audited — which is the moment it matters
+  # most, since the advisory may have been published after the branch was
+  # last pushed.
+  workflow_call:
+    inputs:
+      ref:
+        # The caller passes the ref it is about to build, so the audit is of
+        # the same code. A release can be dispatched by hand against an older
+        # tag, where the caller's own ref is the branch it was dispatched
+        # from and auditing that would prove nothing about the build. Empty
+        # for every other trigger, which leaves checkout on its default.
+        description: 'Ref to audit. Defaults to the ref this workflow runs on.'
+        type: string
+        required: false
+        default: ''
 
 concurrency:
   group: audit-${{ github.ref }}
@@ -30,6 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -52,3 +71,24 @@ jobs:
         # where they can be read.
         run: cargo audit
         working-directory: src-tauri
+
+      - uses: actions/setup-node@v4
+        # Only the lock file is needed, so there is nothing to install and
+        # nothing to cache.
+        if: ${{ !cancelled() }}
+        with:
+          node-version: 22
+
+      - name: Audit the npm dependencies
+        # The front end ships to users too, so the same promise has to cover
+        # both lock files. `npm audit` reads `package-lock.json` directly and
+        # fails on any vulnerability, which matches what `cargo audit` does on
+        # the Rust side. Dev dependencies are included deliberately: a
+        # compromised build tool reaches the artefact just as surely as a
+        # runtime one. `--omit=dev` is the escape hatch if advisories against
+        # tooling ever drown out the signal.
+        #
+        # It runs even when the Rust audit failed, so one report does not hide
+        # the other.
+        if: ${{ !cancelled() }}
+        run: npm audit
