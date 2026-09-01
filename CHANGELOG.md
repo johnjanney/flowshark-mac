@@ -134,7 +134,14 @@ changes, and it goes up by one when it does.
   option could only slide the middle of the route sideways, which is no help
   when both ends sit on the same line with the obstacle between them — the
   commonest way to have something in the way. The route now steps over or under
-  the obstacle instead.
+  the obstacle instead. It also works where the two ends leave on different
+  axes and the route is a single corner, which it used to draw straight through
+  whatever was sitting on that corner.
+- **A curved connector is judged by the curve, not by the straight line between
+  its ends.** Route around shapes measured the wrong thing: a diagonal line's
+  bounding box covers ground the curve never goes near, so an unrelated shape
+  in that box sent the connector the long way round for nothing, while a curve
+  that swung wide of the box could cross a shape unnoticed.
 - **An exported PDF keeps a connector's curves and rounded corners.** To stop
   the line showing through an endpoint marker the exporter drew the bare
   polyline instead of the path, so a rounded elbow came out with square

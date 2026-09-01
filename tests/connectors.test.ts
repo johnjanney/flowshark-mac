@@ -264,6 +264,97 @@ describe('routing around shapes', () => {
     });
   }
 
+  /** Two shapes whose stubs leave on different axes, with a blocker between. */
+  function blockedCorner(): {
+    doc: FlowsharkDocument;
+    a: ShapeElement;
+    b: ShapeElement;
+    blocker: Rect;
+  } {
+    const doc = createEmptyDocument();
+    const a = createShapeElement({ shape: 'process', frame: { x: 0, y: 0, width: 100, height: 60 } });
+    const b = createShapeElement({
+      shape: 'process',
+      frame: { x: 300, y: 200, width: 100, height: 60 },
+    });
+    const blocker = createShapeElement({
+      shape: 'process',
+      frame: { x: 320, y: 80, width: 60, height: 60 },
+    });
+    addElement(doc, a);
+    addElement(doc, b);
+    addElement(doc, blocker);
+    return { doc, a, b, blocker: blocker.frame };
+  }
+
+  for (const kind of ['elbow', 'step'] as const) {
+    it(`takes a ${kind} connector round a corner obstacle`, () => {
+      const { doc, a, b, blocker } = blockedCorner();
+      // Out of a's right edge and into b's top edge: one stub horizontal and
+      // one vertical, so the route is a single corner rather than a middle
+      // line, and it is the corner an obstacle can sit on.
+      const connector = createConnectorElement({
+        source: { elementId: a.id, anchor: { mode: 'fixed', index: 1 }, point: { x: 0, y: 0 } },
+        target: { elementId: b.id, anchor: { mode: 'fixed', index: 0 }, point: { x: 0, y: 0 } },
+        connectorKind: kind,
+      });
+      addElement(doc, connector);
+
+      expect(clears(routeOf(doc, connector).points, blocker)).toBe(false);
+
+      connector.avoidShapes = true;
+      expect(clears(routeOf(doc, connector).points, blocker)).toBe(true);
+    });
+  }
+
+  it('judges a curve by the curve, not by the line between its ends', () => {
+    const doc = createEmptyDocument();
+    const a = createShapeElement({ shape: 'process', frame: { x: 0, y: 200, width: 100, height: 60 } });
+    const b = createShapeElement({ shape: 'process', frame: { x: 400, y: 0, width: 100, height: 60 } });
+    // Inside the bounding box of the straight line between the two ends, but
+    // a long way from the curve that is actually drawn.
+    addElement(doc, a);
+    addElement(doc, b);
+    addElement(
+      doc,
+      createShapeElement({ shape: 'process', frame: { x: 110, y: 40, width: 60, height: 40 } }),
+    );
+    const connector = createConnectorElement({
+      source: { elementId: a.id, anchor: { mode: 'fixed', index: 1 }, point: { x: 0, y: 0 } },
+      target: { elementId: b.id, anchor: { mode: 'fixed', index: 3 }, point: { x: 0, y: 0 } },
+      connectorKind: 'curved',
+    });
+    addElement(doc, connector);
+
+    const untouched = routeOf(doc, connector).d;
+    connector.avoidShapes = true;
+    expect(routeOf(doc, connector).d).toBe(untouched);
+  });
+
+  it('avoids a shape the curve reaches but that line does not', () => {
+    const doc = createEmptyDocument();
+    const a = createShapeElement({ shape: 'process', frame: { x: 0, y: 0, width: 100, height: 60 } });
+    const b = createShapeElement({ shape: 'process', frame: { x: 0, y: 200, width: 100, height: 60 } });
+    // Both ends leave to the right, so the line between them is a vertical
+    // strip at x = 100 and this sits well clear of it — but the curve's
+    // handles swing the drawn line out through it.
+    const blocker: Rect = { x: 150, y: 100, width: 40, height: 60 };
+    addElement(doc, a);
+    addElement(doc, b);
+    addElement(doc, createShapeElement({ shape: 'process', frame: { ...blocker } }));
+    const connector = createConnectorElement({
+      source: { elementId: a.id, anchor: { mode: 'fixed', index: 1 }, point: { x: 0, y: 0 } },
+      target: { elementId: b.id, anchor: { mode: 'fixed', index: 1 }, point: { x: 0, y: 0 } },
+      connectorKind: 'curved',
+    });
+    addElement(doc, connector);
+
+    expect(clears(routeOf(doc, connector).points, blocker)).toBe(false);
+
+    connector.avoidShapes = true;
+    expect(clears(routeOf(doc, connector).points, blocker)).toBe(true);
+  });
+
   it('leaves a clear curve alone when the option is on', () => {
     const { doc, a, b } = twoShapes();
     const connector = createConnectorElement({
