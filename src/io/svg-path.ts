@@ -12,6 +12,7 @@
  */
 
 import type { Point } from '../model/geometry';
+import { distance } from '../model/geometry';
 
 export type PathSegment =
   | { type: 'move'; to: Point }
@@ -266,4 +267,156 @@ export function transformSegments(
         return segment;
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Trimming
+// ---------------------------------------------------------------------------
+
+function lerp(a: Point, b: Point, t: number): Point {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+function cubicAt(p0: Point, c1: Point, c2: Point, p1: Point, t: number): Point {
+  const mt = 1 - t;
+  return {
+    x: mt ** 3 * p0.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t ** 3 * p1.x,
+    y: mt ** 3 * p0.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t ** 3 * p1.y,
+  };
+}
+
+const FLATTEN_STEPS = 24;
+
+/** Approximate arc length of a cubic, by flattening it. */
+function cubicLength(p0: Point, c1: Point, c2: Point, p1: Point): number {
+  let total = 0;
+  let previous = p0;
+  for (let i = 1; i <= FLATTEN_STEPS; i++) {
+    const next = cubicAt(p0, c1, c2, p1, i / FLATTEN_STEPS);
+    total += distance(previous, next);
+    previous = next;
+  }
+  return total;
+}
+
+/** The parameter at which a cubic has covered `length` from its start. */
+function cubicParameterAt(p0: Point, c1: Point, c2: Point, p1: Point, length: number): number {
+  let travelled = 0;
+  let previous = p0;
+  for (let i = 1; i <= FLATTEN_STEPS; i++) {
+    const t = i / FLATTEN_STEPS;
+    const next = cubicAt(p0, c1, c2, p1, t);
+    const step = distance(previous, next);
+    if (travelled + step >= length) {
+      const within = step === 0 ? 0 : (length - travelled) / step;
+      return (i - 1 + within) / FLATTEN_STEPS;
+    }
+    travelled += step;
+    previous = next;
+  }
+  return 1;
+}
+
+/** The part of a cubic from `t` to 1, by de Casteljau subdivision. */
+function cubicAfter(
+  p0: Point,
+  c1: Point,
+  c2: Point,
+  p1: Point,
+  t: number,
+): { from: Point; c1: Point; c2: Point; to: Point } {
+  const a = lerp(p0, c1, t);
+  const b = lerp(c1, c2, t);
+  const c = lerp(c2, p1, t);
+  const d = lerp(a, b, t);
+  const e = lerp(b, c, t);
+  const f = lerp(d, e, t);
+  return { from: f, c1: e, c2: c, to: p1 };
+}
+
+function reverseSegments(segments: readonly PathSegment[]): PathSegment[] {
+  const points: Point[] = [];
+  let cursor: Point = { x: 0, y: 0 };
+  for (const segment of segments) {
+    if (segment.type === 'close') continue;
+    points.push(cursor);
+    cursor = segment.to;
+  }
+  const out: PathSegment[] = [{ type: 'move', to: cursor }];
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const segment = segments[i];
+    if (segment.type === 'move' || segment.type === 'close') continue;
+    const from = points[i];
+    if (segment.type === 'line') out.push({ type: 'line', to: from });
+    else out.push({ type: 'cubic', c1: segment.c2, c2: segment.c1, to: from });
+  }
+  return out;
+}
+
+/** Drop `length` from the start of an open path, splitting the segment it lands in. */
+function trimSegmentsStart(segments: readonly PathSegment[], length: number): PathSegment[] {
+  if (length <= 0 || segments.length === 0) return [...segments];
+  let cursor: Point = segments[0].type === 'move' ? segments[0].to : { x: 0, y: 0 };
+  let remaining = length;
+  const out: PathSegment[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (segment.type === 'move') {
+      cursor = segment.to;
+      continue;
+    }
+    if (segment.type === 'close') continue;
+    if (out.length > 0) {
+      out.push(segment);
+      cursor = segment.to;
+      continue;
+    }
+    if (segment.type === 'line') {
+      const span = distance(cursor, segment.to);
+      if (span <= remaining) {
+        remaining -= span;
+        cursor = segment.to;
+        continue;
+      }
+      const start = lerp(cursor, segment.to, span === 0 ? 0 : remaining / span);
+      out.push({ type: 'move', to: start }, { type: 'line', to: segment.to });
+      cursor = segment.to;
+      continue;
+    }
+    const span = cubicLength(cursor, segment.c1, segment.c2, segment.to);
+    if (span <= remaining) {
+      remaining -= span;
+      cursor = segment.to;
+      continue;
+    }
+    const t = cubicParameterAt(cursor, segment.c1, segment.c2, segment.to, remaining);
+    const part = cubicAfter(cursor, segment.c1, segment.c2, segment.to, t);
+    out.push(
+      { type: 'move', to: part.from },
+      { type: 'cubic', c1: part.c1, c2: part.c2, to: part.to },
+    );
+    cursor = segment.to;
+  }
+  // Nothing survived the trim: keep the path's last point so callers still
+  // have somewhere to draw.
+  return out.length > 0 ? out : [{ type: 'move', to: cursor }];
+}
+
+/**
+ * Shorten an open path at both ends.
+ *
+ * Connectors use this to stop the line short of an endpoint marker without
+ * giving up the curves and rounded corners the screen draws — trimming the
+ * geometry keeps the exported shape identical to the rendered one.
+ */
+export function trimSegments(
+  segments: readonly PathSegment[],
+  startLength: number,
+  endLength: number,
+): PathSegment[] {
+  let out = trimSegmentsStart(segments, startLength);
+  if (endLength > 0) {
+    out = reverseSegments(trimSegmentsStart(reverseSegments(out), endLength));
+  }
+  return out;
 }

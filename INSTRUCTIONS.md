@@ -207,7 +207,7 @@ Choose in the sidebar before you draw, or in the inspector afterwards.
 |---|---|
 | **Straight** | A direct line |
 | **Elbow** | Right-angled, with optionally rounded corners. The default |
-| **Curved** | A smooth spline through the ends and any bend points |
+| **Curved** | A smooth spline through the ends and any bend points, leaving each shape square to the edge it is attached to |
 | **Step** | A single right-angled step |
 | **Freeform** | A plain line through every bend point you place |
 
@@ -233,9 +233,11 @@ Once you move a bend point FlowShark stops re-routing that connector
 automatically, so your shape survives later edits. The inspector's **Keep my
 bend points** switch controls this directly.
 
-**Route around shapes** makes an elbow connector try to step around anything
-in the way. It works well for isolated obstacles; a dense diagram may still
-need a bend point or two placed by hand.
+**Route around shapes** makes an elbow, step, or curved connector try to step
+around anything in the way. It works well for isolated obstacles; a dense
+diagram may still need a bend point or two placed by hand. A curved connector
+only takes the long way round when the direct curve would cut through
+something, so the option leaves a clear curve as it was.
 
 ### Labels
 

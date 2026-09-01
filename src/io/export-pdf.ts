@@ -26,7 +26,7 @@ import {
   markerInset,
 } from '../connectors/markers';
 import { pointAlongPolyline, tangentAlongPolyline } from '../model/geometry';
-import { parsePath, transformSegments, type PathSegment } from './svg-path';
+import { parsePath, transformSegments, trimSegments, type PathSegment } from './svg-path';
 import { PdfWriter, fmt, isWinAnsiSafe, pdfColor, pdfString } from './pdf-writer';
 import { expandExportSelection, exportRegion, type ExportOptions } from './export';
 import { buildStandaloneSvg } from './export-svg';
@@ -346,37 +346,17 @@ function drawConnector(
   const gs = content.opacityResource(style.opacity, style.opacity);
   if (gs) content.push(`/${gs} gs`);
 
-  // Shorten the line so it does not show through a filled arrowhead.
-  const points = [...route.points];
-  const startInset = markerInset(style.startMarker, style.strokeWidth);
-  const endInset = markerInset(style.endMarker, style.strokeWidth);
-  if (startInset > 0 && points.length >= 2) {
-    points[0] = {
-      x: points[0].x + route.startDirection.x * startInset,
-      y: points[0].y + route.startDirection.y * startInset,
-    };
-  }
-  if (endInset > 0 && points.length >= 2) {
-    const last = points.length - 1;
-    points[last] = {
-      x: points[last].x - route.endDirection.x * endInset,
-      y: points[last].y - route.endDirection.y * endInset,
-    };
-  }
-
   setStroke(content, style.stroke);
   content.push(`${fmt(style.strokeWidth)} w 1 j 1 J`);
   content.push(dashPattern(style.strokeStyle, style.strokeWidth));
-  // Reuse the rendered path so curves and rounded elbows match the screen.
-  const segments = parsePath(route.d);
-  if (startInset > 0 || endInset > 0) {
-    content.push(`${fmt(points[0].x)} ${fmt(points[0].y)} m`);
-    for (let i = 1; i < points.length; i++) {
-      content.push(`${fmt(points[i].x)} ${fmt(points[i].y)} l`);
-    }
-  } else {
-    emitPath(content, segments);
-  }
+  // Reuse the rendered path so curves and rounded elbows match the screen, and
+  // shorten it in place so the line does not show through an endpoint marker.
+  const segments = trimSegments(
+    parsePath(route.d),
+    markerInset(style.startMarker, style.strokeWidth),
+    markerInset(style.endMarker, style.strokeWidth),
+  );
+  emitPath(content, segments);
   content.push('S');
 
   drawMarker(

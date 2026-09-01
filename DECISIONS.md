@@ -29,6 +29,7 @@ including the ones that cost something — and **what would reverse it**.
 - [Connectors](#connectors)
   — [D-019](#d-019-floating-anchors-pick-a-declared-connection-point)
   · [D-020](#d-020-simple-orthogonal-routing-first)
+  · [D-028](#d-028-a-curve-takes-its-end-tangents-from-the-anchors)
 - [Export and system integration](#export-and-system-integration)
   — [D-016](#d-016-write-pdf-directly-with-a-raster-fallback)
   · [D-009](#d-009-build-the-macos-integrations-directly-against-appkit)
@@ -511,9 +512,37 @@ predictable — the same inputs always give the same route. It will not find a
 clever path through a crowded diagram; for that, users place bend points, and
 placing one switches the connector to keeping the user's route.
 
+Moving the middle line is not enough on its own. When both stubs sit on the
+same line — two shapes in a row, which is the commonest way to have something
+in the way — there is no middle line to move, and the option looked broken. So
+there is one fallback: step the crossing over or under the obstacles instead.
+That covers the isolated obstacle without turning into a search.
+
 **What would reverse it.** Diagrams dense enough that manual bend points become
 tedious. That means a real routing pass — an A\* search over a visibility grid —
 which is a self-contained addition behind the same interface.
+
+### D-028: A curve takes its end tangents from the anchors
+
+**Context.** A Catmull-Rom spline derives every tangent from its neighbouring
+points. With no bend points on the connector there are no neighbours: the
+spline has two points and draws the straight line between them, so choosing
+**Curved** appeared to do nothing at all.
+
+**Decision.** The two end tangents come from the anchors rather than from the
+spline — a curve leaves the source along its edge normal and arrives at the
+target along that shape's, with a handle length proportional to the segment it
+belongs to. The interior tangents stay Catmull-Rom, clamped so a handle never
+reaches past the segment it controls.
+
+**Consequences.** A curve with no bend points is a curve, and one with bend
+points still passes through them. Meeting a shape square to its edge is also
+what the arrowhead wants, since the marker is oriented by the line. The clamp
+is what makes an orthogonal spine safe to smooth, which is how a curved
+connector routes around a shape.
+
+**What would reverse it.** Wanting a curve that ignores the anchors and simply
+interpolates the points the user placed. That is what **Freeform** is for.
 
 ---
 
