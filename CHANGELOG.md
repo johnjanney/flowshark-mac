@@ -108,6 +108,18 @@ changes, and it goes up by one when it does.
   them as such.
 
 ### Fixed
+- **A connector onto the shape it already touches loops around it.** Both ends
+  on one shape left the router looking for a line between two points on the
+  same box, and every such line is inside it, so the connector was drawn
+  straight through the middle of its own shape. Where the two ends landed on
+  the same connection point it had no length at all: an invisible connector
+  that could not even be clicked to delete it. Such a connector is now drawn as
+  a loop that goes out, around the shape, and back in, following the shape when
+  it moves, resizes, or rotates.
+- **A bend point no longer falls off a route that overshoots it.** Tidying the
+  route dropped any point in line with its neighbours, which is right for a
+  point the line passes through but wrong for one it doubles back at — the line
+  stopped short and the bend point was left stranded beside it.
 - **A curved connector is curved again.** With no bend points on it the spline
   had only its two ends to work with, and drew the straight line between them —
   choosing **Curved** appeared to do nothing. A curve now leaves each shape

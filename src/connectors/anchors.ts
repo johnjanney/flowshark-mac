@@ -96,18 +96,22 @@ export function resolveAnchor(
   } else if (anchor.mode === 'ratio') {
     ratio = { x: anchor.rx, y: anchor.ry };
   } else {
-    // Floating: choose the declared connection point closest to the far end.
-    let best = ratios[0] ?? { x: 0.5, y: 0.5 };
+    // Floating: choose the declared connection point closest to the far end,
+    // but never the point the far end is standing on. On a connector that
+    // joins a shape to itself that is the nearest point of all, and taking it
+    // collapses the line to nothing.
+    let best: Point | null = null;
     let bestDistance = Infinity;
     for (const candidate of ratios) {
       const p = applyRotation(shape, ratioToPoint(shape.frame, candidate));
       const d = distance(p, toward);
+      if (d < 0.01) continue;
       if (d < bestDistance) {
         bestDistance = d;
         best = candidate;
       }
     }
-    ratio = best;
+    ratio = best ?? ratios[0] ?? { x: 0.5, y: 0.5 };
   }
 
   const side = sideForRatio(ratio);

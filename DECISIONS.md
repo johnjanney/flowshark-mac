@@ -30,6 +30,7 @@ including the ones that cost something — and **what would reverse it**.
   — [D-019](#d-019-floating-anchors-pick-a-declared-connection-point)
   · [D-020](#d-020-simple-orthogonal-routing-first)
   · [D-028](#d-028-a-curve-takes-its-end-tangents-from-the-anchors)
+  · [D-029](#d-029-a-connector-onto-its-own-shape-loops-around-it)
 - [Export and system integration](#export-and-system-integration)
   — [D-016](#d-016-write-pdf-directly-with-a-raster-fallback)
   · [D-009](#d-009-build-the-macos-integrations-directly-against-appkit)
@@ -483,13 +484,18 @@ centre to centre with the shape outline — gives connectors that land at
 arbitrary angles on a diamond or a cylinder and look untidy.
 
 **Decision.** A floating anchor chooses, from the shape's own declared
-connection points, the one closest to the other end of the connector, and
-re-chooses whenever either shape moves.
+connection points, the one closest to the other end of the connector — but
+never the point the other end is standing on — and re-chooses whenever either
+shape moves.
 
 **Consequences.** Routes stay tidy and orthogonal without an obstacle-avoidance
 pass. The choice is deterministic, so a document looks identical every time it
 is opened. The cost is that a connector cannot meet a shape at an arbitrary
 point unless the user drags its end there, which pins it as a ratio anchor.
+
+The exclusion earns its place on a connector that joins a shape to itself,
+where the other end is on this very shape and so is the nearest point of all.
+Taking it puts both ends on one spot and the connector disappears.
 
 **What would reverse it.** A shape with too few connection points for a dense
 diagram. The fix is to give that shape more points in the library, not to
@@ -543,6 +549,30 @@ connector routes around a shape.
 
 **What would reverse it.** Wanting a curve that ignores the anchors and simply
 interpolates the points the user placed. That is what **Freeform** is for.
+
+### D-029: A connector onto its own shape loops around it
+
+**Context.** The router joins two ends by finding a line between them. When
+both ends are on the same shape every such line is inside it, so the connector
+was drawn straight through the middle of the box it belonged to.
+
+**Decision.** A connector whose two ends attach to one shape is routed as a
+loop: out square to the source's edge, around a standoff rectangle a fixed
+distance outside the shape, and back in square to the target's. The walk takes
+whichever way round the rectangle is shorter. Both ends on one point is the one
+case with no shorter way, and there the loop straddles the anchor instead.
+
+The loop is built in the shape's own unrotated space and turned back, so it
+follows a rotated shape round rather than sitting upright over it. Bend points
+still win: place one and the route is yours, as on any other connector.
+
+**Consequences.** Every connector type gets a loop, including **Straight** and
+**Freeform** — a self-connector has no straight form worth drawing, and the
+alternative is a line through the shape or no line at all. **Curved** smooths
+the same loop into a teardrop.
+
+**What would reverse it.** Wanting the loop's size or side under the user's
+control. That is a property on the connector, not a change to the routing.
 
 ---
 
