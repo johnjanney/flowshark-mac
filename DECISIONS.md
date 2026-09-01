@@ -43,6 +43,7 @@ including the ones that cost something — and **what would reverse it**.
   — [D-011](#d-011-a-colour-blind-safe-default-palette)
   · [D-018](#d-018-keep-the-name-flowshark)
   · [D-021](#d-021-generate-the-icons-from-a-script)
+  · [D-030](#d-030-the-dependency-audit-fails-on-vulnerabilities-not-on-notices)
 - [Milestone 0 gates](#milestone-0-gates)
 - [Still open](#still-open)
 
@@ -877,6 +878,38 @@ Chromium. Where a feature depends on the shell, the check belongs against the
 shell's own documentation or source — reading Tauri's `drag.js` is what
 settled this one, and reading its permission tables is what showed
 `allow-start-dragging` was missing from the default set.
+
+---
+
+### D-030: The dependency audit fails on vulnerabilities, not on notices
+
+**Context.** One open Dependabot alert had been assessed by hand and found not
+to reach the product, but nothing checked for the next one. An audit job was
+deferred on the grounds that it forced a choice: run it unfiltered and it is
+permanently red on advisories that cannot affect a macOS build, or filter it
+and someone owns an ignore list.
+
+**Decision.** Run `cargo audit` with its own defaults, on every push and once a
+week, in a workflow of its own.
+
+That choice turns out not to exist. `cargo audit` fails on a `vulnerability`
+and reports `unmaintained` and `unsound` notices without failing. The tree has
+seventeen notices and no vulnerability, so the job is green today, unfiltered,
+with no ignore list for anyone to own. The weekly run is the part that earns
+its place: an advisory can be published against a lock file that has not
+changed in months, and nothing else here would notice.
+
+**Consequences.** The job's promise is exactly "no known vulnerability in the
+dependency tree", which is the promise worth gating a merge on. A new
+`unsound` notice does not fail the build; it appears in the job's log, and
+Dependabot raises it separately. Seventeen notices are noise to read past, but
+they arrive transitively through Tauri and eleven are the GTK stack a macOS
+build never compiles, so failing on them would be failing on nothing.
+
+**What would reverse it.** An `unsound` advisory landing on a crate that is
+actually in the macOS tree. Then the right answer is to deny that one
+advisory's class, not to deny warnings wholesale — the GTK notices would still
+be noise.
 
 ---
 

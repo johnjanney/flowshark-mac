@@ -1,0 +1,54 @@
+name: Audit
+
+# Advisories arrive on their own schedule, not on ours: a crate that was clean
+# when it was locked can be flagged months later without a line of this
+# repository changing. So this runs on a timer as well as on every push, and it
+# lives apart from CI because putting a schedule on that workflow would build a
+# macOS bundle every week for nothing.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  schedule:
+    # Weekly, off the hour — GitHub asks that scheduled jobs avoid the top of
+    # the hour, where every repository's cron lands at once.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: Dependency advisories
+    # An advisory applies to the lock file rather than to a build target, so
+    # there is nothing to gain from the macOS runners here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit the Rust dependencies
+        # This fails on a known vulnerability and reports everything else
+        # without failing, which is `cargo audit`'s own default and is the
+        # behaviour we want.
+        #
+        # The tree currently carries seventeen `unmaintained` and `unsound`
+        # notices, every one of them arriving transitively through Tauri.
+        # Eleven are the GTK stack, which Tauri uses on Linux and a macOS
+        # build never compiles. Denying warnings would make this job red from
+        # the day it is added, over crates that cannot reach the product, and
+        # would leave someone maintaining an ignore list that grows every time
+        # an upstream crate is retired. The notices stay in this job's log
+        # where they can be read.
+        run: cargo audit
+        working-directory: src-tauri
