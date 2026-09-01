@@ -89,6 +89,10 @@ changes, and it goes up by one when it does.
 ## [Unreleased]
 
 ### Changed
+- **Route around shapes now works on step and curved connectors**, not only on
+  elbows. A curved connector only takes the long way round when the direct
+  curve would cut through something, so ticking the box leaves a clear curve
+  exactly as it was.
 - **Automatic saving is quiet.** It no longer shows a "Saved" notice on every
   interval, and it no longer puts a modal question on screen when the file has
   changed underneath — with nobody there to answer it, that stopped the save
@@ -104,6 +108,26 @@ changes, and it goes up by one when it does.
   them as such.
 
 ### Fixed
+- **A curved connector is curved again.** With no bend points on it the spline
+  had only its two ends to work with, and drew the straight line between them —
+  choosing **Curved** appeared to do nothing. A curve now leaves each shape
+  square to the edge it is attached to and bends between them, so it looks like
+  the curve in the sidebar before you place a single bend point.
+- **A step connector stays at right angles.** Putting a bend point on one
+  turned every leg into a diagonal, and the corner rounding was then applied to
+  the diagonal joins. A step connector now steps between each pair of points,
+  and it arrives at the far shape along that shape's edge instead of from
+  whichever direction it happened to be travelling.
+- **Route around shapes does something when the two shapes line up.** The
+  option could only slide the middle of the route sideways, which is no help
+  when both ends sit on the same line with the obstacle between them — the
+  commonest way to have something in the way. The route now steps over or under
+  the obstacle instead.
+- **An exported PDF keeps a connector's curves and rounded corners.** To stop
+  the line showing through an endpoint marker the exporter drew the bare
+  polyline instead of the path, so a rounded elbow came out with square
+  corners. Since a new connector has an arrowhead by default this affected
+  almost every connector exported. It now shortens the real path.
 - **An edit made while a save was running could be lost.** Saving serialises
   the document and then waits for the write; the editor stays usable for that
   whole time. When the write finished it cleared the "unsaved changes" flag

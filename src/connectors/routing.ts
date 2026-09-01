@@ -20,6 +20,9 @@ import { resolveAnchor, type ResolvedAnchor } from './anchors';
 /** Distance the line travels straight out of a shape before it may turn. */
 export const STUB_LENGTH = 18;
 
+/** Bézier handle length, as a fraction of the segment the handle belongs to. */
+const HANDLE_FRACTION = 0.4;
+
 export interface RoutedPath {
   /** Polyline approximation, always at least two points. */
   points: Point[];
@@ -103,34 +106,116 @@ function avoidObstacles(
   return value;
 }
 
-/** Orthogonal route between two stub ends. */
+/** True when a direction runs more across the canvas than up and down. */
+function isHorizontal(direction: Point): boolean {
+  return Math.abs(direction.x) > Math.abs(direction.y);
+}
+
+/** Does the axis-aligned segment `a`-`b` touch any obstacle? */
+function segmentBlocked(a: Point, b: Point, obstacles: readonly Rect[]): boolean {
+  if (obstacles.length === 0) return false;
+  const span: Rect = {
+    x: Math.min(a.x, b.x) - 0.5,
+    y: Math.min(a.y, b.y) - 0.5,
+    width: Math.abs(a.x - b.x) + 1,
+    height: Math.abs(a.y - b.y) + 1,
+  };
+  return obstacles.some((r) => rectIntersects(span, r));
+}
+
+/** Does any leg of a polyline touch an obstacle? */
+function polylineBlocked(points: readonly Point[], obstacles: readonly Rect[]): boolean {
+  if (obstacles.length === 0) return false;
+  for (let i = 0; i < points.length - 1; i++) {
+    if (segmentBlocked(points[i], points[i + 1], obstacles)) return true;
+  }
+  return false;
+}
+
+/**
+ * Step the middle of the route sideways, across the stubs rather than along
+ * them. This is what rescues the case `avoidObstacles` cannot help with: two
+ * stubs on the same line with something sitting between them, where there is
+ * no middle line to move. Returns null when nothing clears.
+ */
+function detourMiddle(
+  s: Point,
+  e: Point,
+  axis: 'x' | 'y',
+  obstacles: readonly Rect[],
+): Point[] | null {
+  if (obstacles.length === 0) return null;
+  const base = axis === 'y' ? s.y : s.x;
+  const candidates: number[] = [];
+  for (const r of obstacles) {
+    if (axis === 'y') candidates.push(r.y - STUB_LENGTH, r.y + r.height + STUB_LENGTH);
+    else candidates.push(r.x - STUB_LENGTH, r.x + r.width + STUB_LENGTH);
+  }
+  candidates.sort((a, b) => Math.abs(a - base) - Math.abs(b - base));
+  for (const value of candidates) {
+    const middle =
+      axis === 'y'
+        ? [
+            { x: s.x, y: value },
+            { x: e.x, y: value },
+          ]
+        : [
+            { x: value, y: s.y },
+            { x: value, y: e.y },
+          ];
+    if (!polylineBlocked([s, ...middle, e], obstacles)) return middle;
+  }
+  return null;
+}
+
+/**
+ * Orthogonal route between two stub ends.
+ *
+ * `style` picks how the shared middle line is placed: an elbow runs it past
+ * the further stub when both face the same way, which is what stops a route
+ * doubling back; a step always splits the difference, giving the single
+ * right-angled step its name promises.
+ */
 function orthogonalRoute(
   start: Point,
   startDirection: Point,
   end: Point,
   endDirection: Point,
   obstacles: readonly Rect[],
+  style: 'elbow' | 'step' = 'elbow',
 ): Point[] {
   const s = offsetPoint(start, startDirection, STUB_LENGTH);
   const e = offsetPoint(end, endDirection, STUB_LENGTH);
-  const startHorizontal = Math.abs(startDirection.x) > Math.abs(startDirection.y);
-  const endHorizontal = Math.abs(endDirection.x) > Math.abs(endDirection.y);
+  const startHorizontal = isHorizontal(startDirection);
+  const endHorizontal = isHorizontal(endDirection);
 
   let middle: Point[];
   if (startHorizontal && endHorizontal) {
-    let mx = middleCoordinate(s.x, e.x, startDirection.x, endDirection.x);
+    let mx =
+      style === 'step'
+        ? (s.x + e.x) / 2
+        : middleCoordinate(s.x, e.x, startDirection.x, endDirection.x);
     mx = avoidObstacles(mx, s.y, e.y, 'x', obstacles);
     middle = [
       { x: mx, y: s.y },
       { x: mx, y: e.y },
     ];
+    if (polylineBlocked([s, ...middle, e], obstacles)) {
+      middle = detourMiddle(s, e, 'y', obstacles) ?? middle;
+    }
   } else if (!startHorizontal && !endHorizontal) {
-    let my = middleCoordinate(s.y, e.y, startDirection.y, endDirection.y);
+    let my =
+      style === 'step'
+        ? (s.y + e.y) / 2
+        : middleCoordinate(s.y, e.y, startDirection.y, endDirection.y);
     my = avoidObstacles(my, s.x, e.x, 'y', obstacles);
     middle = [
       { x: s.x, y: my },
       { x: e.x, y: my },
     ];
+    if (polylineBlocked([s, ...middle, e], obstacles)) {
+      middle = detourMiddle(s, e, 'x', obstacles) ?? middle;
+    }
   } else if (startHorizontal) {
     middle = [{ x: e.x, y: s.y }];
   } else {
@@ -140,24 +225,37 @@ function orthogonalRoute(
   return simplify([start, s, ...middle, e, end]);
 }
 
-/** A single step: out, across the midpoint, and in. */
-function stepRoute(
+/**
+ * Chain orthogonal legs through the bend points the user placed. Each leg
+ * arrives at its bend point along the direction the previous one left in, so
+ * the corners land on the bend points instead of overshooting them.
+ */
+function orthogonalChain(
   start: Point,
   startDirection: Point,
+  waypoints: readonly Point[],
   end: Point,
+  endDirection: Point,
+  style: 'elbow' | 'step',
 ): Point[] {
-  const startHorizontal = Math.abs(startDirection.x) > Math.abs(startDirection.y);
-  if (startHorizontal) {
-    const mx = (start.x + end.x) / 2;
-    return simplify([
-      start,
-      { x: mx, y: start.y },
-      { x: mx, y: end.y },
-      end,
-    ]);
+  const chain: Point[] = [start];
+  const knots = [...waypoints, end];
+  let previous = start;
+  let previousDirection = startDirection;
+  for (let i = 0; i < knots.length; i++) {
+    const knot = knots[i];
+    const last = i === knots.length - 1;
+    const arrival = last
+      ? endDirection
+      : { x: -previousDirection.x, y: -previousDirection.y };
+    const leg = orthogonalRoute(previous, previousDirection, knot, arrival, [], style);
+    chain.push(...leg.slice(1));
+    previous = knot;
+    const before = chain[chain.length - 2];
+    const next = before ? directionBetween(before, knot) : previousDirection;
+    if (next.x !== 0 || next.y !== 0) previousDirection = next;
   }
-  const my = (start.y + end.y) / 2;
-  return simplify([start, { x: start.x, y: my }, { x: end.x, y: my }, end]);
+  return simplify(chain);
 }
 
 function pathFromPoints(points: readonly Point[]): string {
@@ -203,27 +301,103 @@ function roundedPathFromPoints(points: readonly Point[], radius: number): string
 }
 
 /**
+ * Strip the straight stubs from an orthogonal route so it can be smoothed.
+ *
+ * A spline does not need them: its end handles already carry the line out of
+ * the shape along the edge normal. Left in, the stub knot sits a few points
+ * from the endpoint with a near-perpendicular tangent, and the curve hooks
+ * back on itself getting to it.
+ */
+function splineSpine(points: readonly Point[]): Point[] {
+  if (points.length <= 3) return points.map((p) => ({ ...p }));
+  const first = points[0];
+  const last = points[points.length - 1];
+  const out = points.filter((p, i) => {
+    if (i === 0 || i === points.length - 1) return true;
+    return (
+      distance(p, first) > STUB_LENGTH + 0.01 && distance(p, last) > STUB_LENGTH + 0.01
+    );
+  });
+  return out.length >= 2 ? out.map((p) => ({ ...p })) : points.map((p) => ({ ...p }));
+}
+
+/**
+ * The Bézier handle at an end of the spline.
+ *
+ * It points along `direction` — the direction the line leaves (or, at the far
+ * end, enters) its shape — so a curve meets a shape square to its edge rather
+ * than cutting across the corner. Its length is a fraction of the segment it
+ * belongs to, which keeps the bulge proportionate on both short and long runs.
+ */
+function endHandle(from: Point, direction: Point, toward: Point): Point {
+  const length = distance(from, toward) * HANDLE_FRACTION;
+  return { x: from.x + direction.x * length, y: from.y + direction.y * length };
+}
+
+/**
+ * Shorten a handle so it never reaches further than its own segment.
+ *
+ * Without this the Catmull-Rom tangent at a tight corner — a short stub next
+ * to a long run, which is what an orthogonal spine is made of — is longer than
+ * the segment it controls, and the curve loops back on itself.
+ */
+function clampHandle(anchor: Point, handle: Point, limit: number): Point {
+  const dx = handle.x - anchor.x;
+  const dy = handle.y - anchor.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= limit || length === 0) return handle;
+  const scale = limit / length;
+  return { x: anchor.x + dx * scale, y: anchor.y + dy * scale };
+}
+
+/**
  * A Catmull-Rom spline converted to cubic Béziers, sampled back into a
  * polyline so hit testing and label placement follow the drawn line.
+ *
+ * The two end tangents come from the anchors rather than from the spline, so a
+ * curve with no bend points is still a curve: it leaves the source along its
+ * edge normal and arrives at the target along that shape's.
  */
-function curvedPath(points: readonly Point[]): { d: string; sampled: Point[] } {
-  if (points.length < 3) {
+function curvedPath(
+  points: readonly Point[],
+  startDirection: Point,
+  endDirection: Point,
+): { d: string; sampled: Point[] } {
+  if (points.length < 2) {
     return { d: pathFromPoints(points), sampled: points.map((p) => ({ ...p })) };
   }
   const pts = points;
+  const last = pts.length - 1;
   const parts = [`M ${round(pts[0].x, 2)} ${round(pts[0].y, 2)}`];
   const sampled: Point[] = [{ ...pts[0] }];
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] ?? pts[i];
+  for (let i = 0; i < last; i++) {
     const p1 = pts[i];
     const p2 = pts[i + 1];
-    const p3 = pts[i + 2] ?? pts[i + 1];
-    const c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
-    const c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
+    const limit = distance(p1, p2) * HANDLE_FRACTION;
+    const c1 =
+      i === 0
+        ? endHandle(p1, startDirection, p2)
+        : clampHandle(
+            p1,
+            { x: p1.x + (p2.x - pts[i - 1].x) / 6, y: p1.y + (p2.y - pts[i - 1].y) / 6 },
+            limit,
+          );
+    // `endDirection` points out of the target, which is exactly where the
+    // incoming handle has to sit.
+    const c2 =
+      i === last - 1
+        ? endHandle(p2, endDirection, p1)
+        : clampHandle(
+            p2,
+            { x: p2.x - (pts[i + 2].x - p1.x) / 6, y: p2.y - (pts[i + 2].y - p1.y) / 6 },
+            limit,
+          );
     parts.push(
       `C ${round(c1.x, 2)} ${round(c1.y, 2)} ${round(c2.x, 2)} ${round(c2.y, 2)} ${round(p2.x, 2)} ${round(p2.y, 2)}`,
     );
-    const steps = 12;
+    // Sample densely enough that hit testing and labels follow the curve, but
+    // not so densely that a long diagram carries thousands of points.
+    const steps = Math.max(12, Math.min(48, Math.round(distance(p1, p2) / 8)));
     for (let s = 1; s <= steps; s++) {
       const t = s / steps;
       const mt = 1 - t;
@@ -304,48 +478,61 @@ export function routeConnector(
   if (kind === 'straight' || kind === 'freeform') {
     points = simplify([source.point, ...waypoints, target.point]);
   } else if (kind === 'curved') {
-    points = simplify([source.point, ...waypoints, target.point]);
+    // The spline normally runs straight through the bend points. It only
+    // borrows an orthogonal spine when the user asked the connector to route
+    // around shapes and the direct line would cut through one, so ticking the
+    // box does not change a curve that was already clear.
+    const direct = simplify([source.point, ...waypoints, target.point]);
+    points =
+      waypoints.length === 0 && polylineBlocked(direct, obstacles)
+        ? splineSpine(
+            orthogonalRoute(
+              source.point,
+              startDirection,
+              target.point,
+              endDirection,
+              obstacles,
+            ),
+          )
+        : direct;
   } else if (kind === 'step') {
     points =
       waypoints.length > 0
-        ? simplify([source.point, ...waypoints, target.point])
-        : stepRoute(source.point, startDirection, target.point);
+        ? orthogonalChain(
+            source.point,
+            startDirection,
+            waypoints,
+            target.point,
+            endDirection,
+            'step',
+          )
+        : orthogonalRoute(
+            source.point,
+            startDirection,
+            target.point,
+            endDirection,
+            obstacles,
+            'step',
+          );
   } else {
-    // Elbow. With manual waypoints, route orthogonally between each pair.
-    if (waypoints.length > 0) {
-      const chain: Point[] = [source.point];
-      let previous = source.point;
-      let previousDirection = startDirection;
-      for (const waypoint of waypoints) {
-        const leg = orthogonalRoute(
-          previous,
-          previousDirection,
-          waypoint,
-          { x: -previousDirection.x, y: -previousDirection.y },
-          [],
-        );
-        chain.push(...leg.slice(1));
-        previous = waypoint;
-        previousDirection = directionBetween(chain[chain.length - 2] ?? previous, waypoint);
-      }
-      const finalLeg = orthogonalRoute(
-        previous,
-        previousDirection,
-        target.point,
-        endDirection,
-        [],
-      );
-      chain.push(...finalLeg.slice(1));
-      points = simplify(chain);
-    } else {
-      points = orthogonalRoute(
-        source.point,
-        startDirection,
-        target.point,
-        endDirection,
-        obstacles,
-      );
-    }
+    // Elbow. With manual bend points, route orthogonally between each pair.
+    points =
+      waypoints.length > 0
+        ? orthogonalChain(
+            source.point,
+            startDirection,
+            waypoints,
+            target.point,
+            endDirection,
+            'elbow',
+          )
+        : orthogonalRoute(
+            source.point,
+            startDirection,
+            target.point,
+            endDirection,
+            obstacles,
+          );
   }
 
   if (points.length < 2) points = [source.point, target.point];
@@ -353,7 +540,7 @@ export function routeConnector(
   let d: string;
   let sampled = points;
   if (kind === 'curved') {
-    const curve = curvedPath(points);
+    const curve = curvedPath(points, startDirection, endDirection);
     d = curve.d;
     sampled = curve.sampled;
   } else if (kind === 'elbow' || kind === 'step') {

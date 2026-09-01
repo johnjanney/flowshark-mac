@@ -9,7 +9,7 @@ import {
 import { boundsOf } from '../src/model/document';
 import { exportVectorPdf } from '../src/io/export-pdf';
 import { isWinAnsiSafe, pdfColor, pdfString } from '../src/io/pdf-writer';
-import { parsePath } from '../src/io/svg-path';
+import { parsePath, trimSegments } from '../src/io/svg-path';
 import { buildScene, escapeXml } from '../src/canvas/scene';
 import {
   createConnectorElement,
@@ -253,6 +253,42 @@ describe('SVG path parsing', () => {
     const second = segments[2];
     if (second.type !== 'line') throw new Error('expected a line');
     expect(second.to).toEqual({ x: 20, y: 10 });
+  });
+});
+
+describe('path trimming', () => {
+  it('shortens a straight path at both ends', () => {
+    const segments = trimSegments(parsePath('M 0 0 L 100 0'), 10, 20);
+    expect(segments[0]).toEqual({ type: 'move', to: { x: 10, y: 0 } });
+    expect(segments[1]).toEqual({ type: 'line', to: { x: 80, y: 0 } });
+  });
+
+  it('drops whole segments the trim swallows', () => {
+    const segments = trimSegments(parsePath('M 0 0 L 50 0 L 100 0'), 60, 10);
+    expect(segments).toHaveLength(2);
+    expect(segments[0]).toEqual({ type: 'move', to: { x: 60, y: 0 } });
+    expect(segments[1]).toEqual({ type: 'line', to: { x: 90, y: 0 } });
+  });
+
+  it('keeps a curve a curve', () => {
+    const segments = trimSegments(parsePath('M 0 0 C 40 0 60 100 100 100'), 10, 10);
+    expect(segments).toHaveLength(2);
+    expect(segments[1].type).toBe('cubic');
+    const start = segments[0];
+    if (start.type !== 'move') throw new Error('expected a move');
+    // Roughly ten points along the curve, not ten points along the chord.
+    expect(Math.hypot(start.to.x, start.to.y)).toBeGreaterThan(8);
+    expect(Math.hypot(start.to.x, start.to.y)).toBeLessThan(11);
+  });
+
+  it('leaves a path alone when there is nothing to trim', () => {
+    const original = parsePath('M 0 0 L 100 0');
+    expect(trimSegments(original, 0, 0)).toEqual(original);
+  });
+
+  it('survives a trim longer than the path', () => {
+    const segments = trimSegments(parsePath('M 0 0 L 100 0'), 200, 0);
+    expect(segments).toEqual([{ type: 'move', to: { x: 100, y: 0 } }]);
   });
 });
 

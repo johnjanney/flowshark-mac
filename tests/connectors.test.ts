@@ -5,6 +5,7 @@ import { routeConnector, simplify } from '../src/connectors/routing';
 import { distanceToPolyline } from '../src/model/geometry';
 import { resolveAnchor, sideForRatio } from '../src/connectors/anchors';
 import { collectMarkers, markerId, markerInset, markerMarkup } from '../src/connectors/markers';
+import type { Point, Rect } from '../src/model/geometry';
 import type { FlowsharkDocument, ShapeElement } from '../src/model/types';
 
 function twoShapes(): { doc: FlowsharkDocument; a: ShapeElement; b: ShapeElement } {
@@ -96,6 +97,73 @@ describe('connector routing', () => {
     expect(distanceToPolyline({ x: 220, y: 140 }, route.points)).toBeLessThan(0.01);
   });
 
+  it('curves a curved connector that has no bend points', () => {
+    const { doc, a, b } = twoShapes();
+    const connector = createConnectorElement({
+      source: { elementId: a.id, anchor: { mode: 'fixed', index: 1 }, point: { x: 0, y: 0 } },
+      target: { elementId: b.id, anchor: { mode: 'fixed', index: 3 }, point: { x: 0, y: 0 } },
+      connectorKind: 'curved',
+    });
+    addElement(doc, connector);
+    const route = routeOf(doc, connector);
+
+    expect(route.d).toContain('C ');
+    expect(route.points.length).toBeGreaterThan(10);
+    // The drawn line must actually leave the straight chord between the ends.
+    const chord = [route.points[0], route.points[route.points.length - 1]];
+    const bulge = Math.max(...route.points.map((p) => distanceToPolyline(p, chord)));
+    expect(bulge).toBeGreaterThan(5);
+  });
+
+  it('leaves and enters a curve along the anchor edges', () => {
+    const { doc, a, b } = twoShapes();
+    const connector = createConnectorElement({
+      // Out of the right edge of a, into the left edge of b.
+      source: { elementId: a.id, anchor: { mode: 'fixed', index: 1 }, point: { x: 0, y: 0 } },
+      target: { elementId: b.id, anchor: { mode: 'fixed', index: 3 }, point: { x: 0, y: 0 } },
+      connectorKind: 'curved',
+    });
+    addElement(doc, connector);
+    const route = routeOf(doc, connector);
+
+    expect(route.startDirection.x).toBeGreaterThan(0.99);
+    expect(route.endDirection.x).toBeGreaterThan(0.99);
+  });
+
+  it('keeps a step connector orthogonal, bend points and all', () => {
+    const { doc, a, b } = twoShapes();
+    const connector = createConnectorElement({
+      source: { elementId: a.id, anchor: { mode: 'fixed', index: 1 }, point: { x: 0, y: 0 } },
+      target: { elementId: b.id, anchor: { mode: 'fixed', index: 3 }, point: { x: 0, y: 0 } },
+      connectorKind: 'step',
+    });
+    connector.routing = 'manual';
+    connector.waypoints = [{ x: 200, y: 40 }];
+    addElement(doc, connector);
+    const route = routeOf(doc, connector);
+
+    for (let i = 0; i < route.points.length - 1; i++) {
+      const p = route.points[i];
+      const q = route.points[i + 1];
+      expect(Math.abs(p.y - q.y) < 0.01 || Math.abs(p.x - q.x) < 0.01).toBe(true);
+    }
+    expect(distanceToPolyline({ x: 200, y: 40 }, route.points)).toBeLessThan(0.01);
+  });
+
+  it('arrives at a step connector along the target edge', () => {
+    const { doc, a, b } = twoShapes();
+    const connector = createConnectorElement({
+      source: { elementId: a.id, anchor: { mode: 'fixed', index: 1 }, point: { x: 0, y: 0 } },
+      target: { elementId: b.id, anchor: { mode: 'fixed', index: 3 }, point: { x: 0, y: 0 } },
+      connectorKind: 'step',
+    });
+    addElement(doc, connector);
+    const route = routeOf(doc, connector);
+    // Into the left edge of b, so the last leg runs horizontally.
+    expect(route.endDirection.x).toBeCloseTo(1, 2);
+    expect(route.endDirection.y).toBeCloseTo(0, 2);
+  });
+
   it('handles a connector with a free endpoint', () => {
     const { doc, a } = twoShapes();
     const connector = createConnectorElement({
@@ -116,6 +184,73 @@ describe('connector routing', () => {
         { x: 10, y: 0 },
       ]),
     ).toHaveLength(2);
+  });
+});
+
+describe('routing around shapes', () => {
+  /** Two shapes in a row with something parked between them. */
+  function blockedRow(): { doc: FlowsharkDocument; a: ShapeElement; b: ShapeElement; blocker: Rect } {
+    const doc = createEmptyDocument();
+    const a = createShapeElement({ shape: 'process', frame: { x: 0, y: 0, width: 100, height: 60 } });
+    const b = createShapeElement({ shape: 'process', frame: { x: 400, y: 0, width: 100, height: 60 } });
+    const blocker = createShapeElement({
+      shape: 'process',
+      frame: { x: 200, y: -30, width: 100, height: 120 },
+    });
+    addElement(doc, a);
+    addElement(doc, b);
+    addElement(doc, blocker);
+    return { doc, a, b, blocker: blocker.frame };
+  }
+
+  /** Walk the drawn line closely and report whether it ever enters `blocker`. */
+  function clears(points: readonly Point[], blocker: Rect): boolean {
+    const inside = (p: Point): boolean =>
+      p.x >= blocker.x &&
+      p.x <= blocker.x + blocker.width &&
+      p.y >= blocker.y &&
+      p.y <= blocker.y + blocker.height;
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+      const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y)));
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        if (inside({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })) return false;
+      }
+    }
+    return true;
+  }
+
+  for (const kind of ['elbow', 'step', 'curved'] as const) {
+    it(`steps a ${kind} connector around an obstacle in its way`, () => {
+      const { doc, a, b, blocker } = blockedRow();
+      const connector = createConnectorElement({
+        source: { elementId: a.id, anchor: { mode: 'fixed', index: 1 }, point: { x: 0, y: 0 } },
+        target: { elementId: b.id, anchor: { mode: 'fixed', index: 3 }, point: { x: 0, y: 0 } },
+        connectorKind: kind,
+      });
+      addElement(doc, connector);
+
+      // Without the option the line goes straight through, as before.
+      expect(clears(routeOf(doc, connector).points, blocker)).toBe(false);
+
+      connector.avoidShapes = true;
+      expect(clears(routeOf(doc, connector).points, blocker)).toBe(true);
+    });
+  }
+
+  it('leaves a clear curve alone when the option is on', () => {
+    const { doc, a, b } = twoShapes();
+    const connector = createConnectorElement({
+      source: { elementId: a.id, anchor: { mode: 'fixed', index: 1 }, point: { x: 0, y: 0 } },
+      target: { elementId: b.id, anchor: { mode: 'fixed', index: 3 }, point: { x: 0, y: 0 } },
+      connectorKind: 'curved',
+    });
+    addElement(doc, connector);
+    const before = routeOf(doc, connector).d;
+    connector.avoidShapes = true;
+    expect(routeOf(doc, connector).d).toBe(before);
   });
 });
 
