@@ -211,6 +211,13 @@ Choose in the sidebar before you draw, or in the inspector afterwards.
 | **Step** | A single right-angled step |
 | **Freeform** | A plain line through every bend point you place |
 
+### A connector onto the same shape
+
+Drag one end of a connector onto the shape its other end is already on and you
+get a loop: the line goes out of the shape, around it, and back in. It works
+with every connector type — **Curved** draws the loop as a teardrop — and it
+follows the shape when you move, resize, or rotate it.
+
 ### Ends and lines
 
 The inspector's **Connector** section sets the line colour, thickness, and

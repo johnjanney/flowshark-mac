@@ -7,7 +7,7 @@
  */
 
 import type { Point, Rect } from '../model/geometry';
-import { distance, rectIntersects, round } from '../model/geometry';
+import { distance, rectCenter, rectIntersects, rotatePoint, round } from '../model/geometry';
 import type {
   ConnectorElement,
   ConnectorKind,
@@ -15,13 +15,19 @@ import type {
   ShapeElement,
 } from '../model/types';
 import { isShape } from '../model/types';
-import { resolveAnchor, type ResolvedAnchor } from './anchors';
+import { resolveAnchor, type ResolvedAnchor, type Side } from './anchors';
 
 /** Distance the line travels straight out of a shape before it may turn. */
 export const STUB_LENGTH = 18;
 
 /** Bézier handle length, as a fraction of the segment the handle belongs to. */
 const HANDLE_FRACTION = 0.4;
+
+/** How far a connector that joins a shape to itself stands off from it. */
+export const LOOP_MARGIN = 24;
+
+/** How wide that loop is when both of its ends land on one point. */
+const LOOP_SPAN = 20;
 
 export interface RoutedPath {
   /** Polyline approximation, always at least two points. */
@@ -38,7 +44,7 @@ function samePoint(a: Point, b: Point): boolean {
   return Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01;
 }
 
-/** Drop duplicate and collinear points so paths stay short and clean. */
+/** Drop duplicate and pass-through points so paths stay short and clean. */
 export function simplify(points: readonly Point[]): Point[] {
   const out: Point[] = [];
   for (const p of points) {
@@ -51,7 +57,12 @@ export function simplify(points: readonly Point[]): Point[] {
     const b = out[i];
     const c = out[i + 1];
     const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-    if (Math.abs(cross) > 0.01) result.push(b);
+    // Being collinear is not enough to drop a point: where the line doubles
+    // back, `b` is the far end of the line rather than a point along it, and
+    // dropping it shortens the route. That is how a bend point the user placed
+    // used to fall off a route that overshot it.
+    const forward = (b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y);
+    if (Math.abs(cross) > 0.01 || forward < 0) result.push(b);
   }
   result.push(out[out.length - 1]);
   return result;
@@ -256,6 +267,154 @@ function orthogonalChain(
     if (next.x !== 0 || next.y !== 0) previousDirection = next;
   }
   return simplify(chain);
+}
+
+/** Total length of a polyline. */
+function polylineLength(points: readonly Point[]): number {
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i++) total += distance(points[i], points[i + 1]);
+  return total;
+}
+
+/** Clockwise, so the side after `right` is `bottom`. */
+const LOOP_SIDES: readonly Side[] = ['top', 'right', 'bottom', 'left'];
+
+/**
+ * Which side of its shape an anchor sits on, read off the direction the line
+ * leaves in. In the shape's own unrotated space that is one of four unit
+ * vectors, so this is exact rather than a guess.
+ */
+function sideForDirection(direction: Point): Side {
+  if (isHorizontal(direction)) return direction.x >= 0 ? 'right' : 'left';
+  return direction.y >= 0 ? 'bottom' : 'top';
+}
+
+/**
+ * The point on `side` of the standoff rectangle level with `p`.
+ *
+ * An anchor normally sits on its shape's outline, so this only moves the point
+ * out to the standoff. A ratio anchor dropped inside the shape is carried out
+ * to the rectangle too, which is what keeps the loop outside the shape.
+ */
+function ontoHalo(p: Point, side: Side, halo: Rect): Point {
+  const right = halo.x + halo.width;
+  const bottom = halo.y + halo.height;
+  const x = Math.min(right, Math.max(halo.x, p.x));
+  const y = Math.min(bottom, Math.max(halo.y, p.y));
+  switch (side) {
+    case 'top':
+      return { x, y: halo.y };
+    case 'right':
+      return { x: right, y };
+    case 'bottom':
+      return { x, y: bottom };
+    default:
+      return { x: halo.x, y };
+  }
+}
+
+/** The standoff-rectangle corner one step clockwise from `side`. */
+function cornerAfter(side: Side, halo: Rect): Point {
+  const right = halo.x + halo.width;
+  const bottom = halo.y + halo.height;
+  switch (side) {
+    case 'top':
+      return { x: right, y: halo.y };
+    case 'right':
+      return { x: right, y: bottom };
+    case 'bottom':
+      return { x: halo.x, y: bottom };
+    default:
+      return { x: halo.x, y: halo.y };
+  }
+}
+
+/** The corners passed walking the standoff rectangle from `from` to `to`. */
+function haloCorners(from: Side, to: Side, halo: Rect, clockwise: boolean): Point[] {
+  const corners: Point[] = [];
+  let index = LOOP_SIDES.indexOf(from);
+  const stop = LOOP_SIDES.indexOf(to);
+  const steps = clockwise ? (stop - index + 4) % 4 : (index - stop + 4) % 4;
+  for (let step = 0; step < steps; step++) {
+    if (clockwise) {
+      corners.push(cornerAfter(LOOP_SIDES[index], halo));
+      index = (index + 1) % 4;
+    } else {
+      index = (index + 3) % 4;
+      corners.push(cornerAfter(LOOP_SIDES[index], halo));
+    }
+  }
+  return corners;
+}
+
+/**
+ * Route a connector whose two ends attach to the same shape.
+ *
+ * Routing the ends against each other the ordinary way draws the line straight
+ * through the shape, because the shared middle line it looks for is inside it.
+ * A loop instead leaves the source square to its edge, travels around the
+ * shape on a standoff rectangle, and comes back in square to the target's.
+ *
+ * The work is done in the shape's own unrotated space, so a rotated shape gets
+ * a loop that follows it round rather than an upright one laid over it.
+ */
+function selfLoopRoute(
+  shape: ShapeElement,
+  start: Point,
+  startDirection: Point,
+  end: Point,
+  endDirection: Point,
+): Point[] {
+  const centre = rectCenter(shape.frame);
+  const rotation = shape.rotation ?? 0;
+  const spin = (p: Point, degrees: number): Point =>
+    rotation ? rotatePoint(p, centre, degrees) : p;
+  const spinDirection = (d: Point, degrees: number): Point => {
+    if (!rotation) return d;
+    const rad = (degrees * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    return { x: d.x * cos - d.y * sin, y: d.x * sin + d.y * cos };
+  };
+
+  const from = spin(start, -rotation);
+  const to = spin(end, -rotation);
+  const fromDirection = spinDirection(startDirection, -rotation);
+  const toDirection = spinDirection(endDirection, -rotation);
+  const halo: Rect = {
+    x: shape.frame.x - LOOP_MARGIN,
+    y: shape.frame.y - LOOP_MARGIN,
+    width: shape.frame.width + LOOP_MARGIN * 2,
+    height: shape.frame.height + LOOP_MARGIN * 2,
+  };
+  const fromSide = sideForDirection(fromDirection);
+  const toSide = sideForDirection(toDirection);
+  const s = ontoHalo(from, fromSide, halo);
+  const e = ontoHalo(to, toSide, halo);
+
+  let middle: Point[];
+  if (samePoint(s, e)) {
+    // Both ends on one point. There is no shorter way round, so the loop
+    // straddles the anchor instead of circling the whole shape.
+    const tangent = { x: -fromDirection.y, y: fromDirection.x };
+    const reach = LOOP_SPAN / 2;
+    middle = [
+      { x: s.x + tangent.x * reach, y: s.y + tangent.y * reach },
+      { x: s.x - tangent.x * reach, y: s.y - tangent.y * reach },
+    ];
+  } else if (fromSide === toSide) {
+    middle = [s, e];
+  } else {
+    const clockwise = [s, ...haloCorners(fromSide, toSide, halo, true), e];
+    const anticlockwise = [s, ...haloCorners(fromSide, toSide, halo, false), e];
+    middle =
+      polylineLength([from, ...anticlockwise, to]) <
+      polylineLength([from, ...clockwise, to])
+        ? anticlockwise
+        : clockwise;
+  }
+
+  return simplify([from, ...middle, to].map((p) => spin(p, rotation)));
 }
 
 function pathFromPoints(points: readonly Point[]): string {
@@ -474,8 +633,21 @@ export function routeConnector(
   const obstacles =
     connector.avoidShapes && context.obstacles ? context.obstacles : [];
 
+  // A connector joining a shape to itself loops around it, whatever its type:
+  // there is no route between the two ends that is not inside the shape.
+  const sameElement =
+    connector.source.elementId !== null &&
+    connector.source.elementId === connector.target.elementId;
+  const loopShape = sameElement ? context.elements[connector.source.elementId!] : undefined;
+  const loop =
+    isShape(loopShape) && waypoints.length === 0
+      ? selfLoopRoute(loopShape, source.point, startDirection, target.point, endDirection)
+      : null;
+
   let points: Point[];
-  if (kind === 'straight' || kind === 'freeform') {
+  if (loop) {
+    points = loop;
+  } else if (kind === 'straight' || kind === 'freeform') {
     points = simplify([source.point, ...waypoints, target.point]);
   } else if (kind === 'curved') {
     // The spline normally runs straight through the bend points. It only

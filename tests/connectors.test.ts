@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { createEmptyDocument, createConnectorElement, createShapeElement } from '../src/model/defaults';
 import { addElement, refreshConnectorPoints, routeOf } from '../src/model/document';
 import { routeConnector, simplify } from '../src/connectors/routing';
-import { distanceToPolyline } from '../src/model/geometry';
+import { distance, distanceToPolyline, rectCenter, rotatePoint } from '../src/model/geometry';
 import { resolveAnchor, sideForRatio } from '../src/connectors/anchors';
 import { collectMarkers, markerId, markerInset, markerMarkup } from '../src/connectors/markers';
 import type { Point, Rect } from '../src/model/geometry';
-import type { FlowsharkDocument, ShapeElement } from '../src/model/types';
+import type {
+  AnchorSpec,
+  ConnectorElement,
+  FlowsharkDocument,
+  ShapeElement,
+} from '../src/model/types';
 
 function twoShapes(): { doc: FlowsharkDocument; a: ShapeElement; b: ShapeElement } {
   const doc = createEmptyDocument();
@@ -15,6 +20,21 @@ function twoShapes(): { doc: FlowsharkDocument; a: ShapeElement; b: ShapeElement
   addElement(doc, a);
   addElement(doc, b);
   return { doc, a, b };
+}
+
+/** Every point along a polyline, a point apart, so a thin gap cannot hide. */
+function walk(points: readonly Point[]): Point[] {
+  const out: Point[] = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y)));
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+  return out;
 }
 
 describe('connector routing', () => {
@@ -176,6 +196,18 @@ describe('connector routing', () => {
     expect(route.points[route.points.length - 1]).toEqual({ x: 400, y: 400 });
   });
 
+  it('keeps a point the line doubles back through', () => {
+    // Collinear, but the middle point is the far end of the line rather than a
+    // point along it, so dropping it would shorten the route.
+    expect(
+      simplify([
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 4, y: 0 },
+      ]),
+    ).toHaveLength(3);
+  });
+
   it('drops collinear points', () => {
     expect(
       simplify([
@@ -203,23 +235,15 @@ describe('routing around shapes', () => {
     return { doc, a, b, blocker: blocker.frame };
   }
 
-  /** Walk the drawn line closely and report whether it ever enters `blocker`. */
+  /** Does the drawn line stay out of `blocker` the whole way along? */
   function clears(points: readonly Point[], blocker: Rect): boolean {
-    const inside = (p: Point): boolean =>
-      p.x >= blocker.x &&
-      p.x <= blocker.x + blocker.width &&
-      p.y >= blocker.y &&
-      p.y <= blocker.y + blocker.height;
-    for (let i = 0; i < points.length - 1; i++) {
-      const a = points[i];
-      const b = points[i + 1];
-      const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y)));
-      for (let s = 0; s <= steps; s++) {
-        const t = s / steps;
-        if (inside({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })) return false;
-      }
-    }
-    return true;
+    return walk(points).every(
+      (p) =>
+        p.x < blocker.x ||
+        p.x > blocker.x + blocker.width ||
+        p.y < blocker.y ||
+        p.y > blocker.y + blocker.height,
+    );
   }
 
   for (const kind of ['elbow', 'step', 'curved'] as const) {
@@ -254,12 +278,122 @@ describe('routing around shapes', () => {
   });
 });
 
+describe('a connector that joins a shape to itself', () => {
+  const FRAME: Rect = { x: 120, y: 90, width: 110, height: 64 };
+
+  function selfConnector(
+    source: AnchorSpec,
+    target: AnchorSpec,
+    connectorKind: ConnectorElement['connectorKind'] = 'elbow',
+    rotation = 0,
+  ): { doc: FlowsharkDocument; shape: ShapeElement; connector: ConnectorElement } {
+    const doc = createEmptyDocument();
+    const shape = createShapeElement({ shape: 'process', frame: { ...FRAME } });
+    shape.rotation = rotation;
+    addElement(doc, shape);
+    const connector = createConnectorElement({
+      source: { elementId: shape.id, anchor: source, point: { x: 0, y: 0 } },
+      target: { elementId: shape.id, anchor: target, point: { x: 0, y: 0 } },
+      connectorKind,
+    });
+    addElement(doc, connector);
+    refreshConnectorPoints(doc);
+    return { doc, shape, connector };
+  }
+
+  /** Is `p` properly inside the shape, rather than on its outline? */
+  function insideShape(p: Point, shape: ShapeElement): boolean {
+    const local = shape.rotation
+      ? rotatePoint(p, rectCenter(shape.frame), -shape.rotation)
+      : p;
+    const margin = 0.5;
+    return (
+      local.x > shape.frame.x + margin &&
+      local.x < shape.frame.x + shape.frame.width - margin &&
+      local.y > shape.frame.y + margin &&
+      local.y < shape.frame.y + shape.frame.height - margin
+    );
+  }
+
+  function totalLength(points: readonly Point[]): number {
+    let total = 0;
+    for (let i = 0; i < points.length - 1; i++) total += distance(points[i], points[i + 1]);
+    return total;
+  }
+
+  const anchorPairs: Array<[string, AnchorSpec, AnchorSpec]> = [
+    ['adjacent edges', { mode: 'fixed', index: 1 }, { mode: 'fixed', index: 2 }],
+    ['opposite edges', { mode: 'fixed', index: 1 }, { mode: 'fixed', index: 3 }],
+    ['one edge twice', { mode: 'fixed', index: 1 }, { mode: 'fixed', index: 1 }],
+    ['a fixed and a floating end', { mode: 'fixed', index: 0 }, { mode: 'floating' }],
+    ['two floating ends', { mode: 'floating' }, { mode: 'floating' }],
+  ];
+
+  for (const kind of ['straight', 'elbow', 'curved', 'step', 'freeform'] as const) {
+    for (const [label, source, target] of anchorPairs) {
+      it(`loops a ${kind} connector outside the shape, ${label}`, () => {
+        const { doc, shape, connector } = selfConnector(source, target, kind);
+        const route = routeOf(doc, connector);
+
+        expect(walk(route.points).some((p) => insideShape(p, shape))).toBe(false);
+        // A loop that collapses to a point is an invisible connector.
+        expect(totalLength(route.points)).toBeGreaterThan(20);
+      });
+    }
+  }
+
+  it('follows a rotated shape round', () => {
+    const { doc, shape, connector } = selfConnector(
+      { mode: 'fixed', index: 1 },
+      { mode: 'fixed', index: 2 },
+      'elbow',
+      30,
+    );
+    const route = routeOf(doc, connector);
+    expect(walk(route.points).some((p) => insideShape(p, shape))).toBe(false);
+    expect(totalLength(route.points)).toBeGreaterThan(20);
+  });
+
+  it('still lets bend points decide the route', () => {
+    const { doc, connector } = selfConnector({ mode: 'fixed', index: 1 }, { mode: 'fixed', index: 2 });
+    connector.routing = 'manual';
+    connector.waypoints = [{ x: 400, y: 300 }];
+    const route = routeOf(doc, connector);
+    expect(distanceToPolyline({ x: 400, y: 300 }, route.points)).toBeLessThan(0.01);
+  });
+
+  it('keeps its ends on the anchors it is attached to', () => {
+    const { doc, connector } = selfConnector(
+      { mode: 'fixed', index: 1 },
+      { mode: 'fixed', index: 2 },
+    );
+    const route = routeOf(doc, connector);
+    expect(route.points[0]).toEqual({ x: FRAME.x + FRAME.width, y: FRAME.y + FRAME.height / 2 });
+    expect(route.points[route.points.length - 1]).toEqual({
+      x: FRAME.x + FRAME.width / 2,
+      y: FRAME.y + FRAME.height,
+    });
+  });
+});
+
 describe('anchors', () => {
   it('maps ratios to the nearest edge', () => {
     expect(sideForRatio({ x: 0.5, y: 0 })).toBe('top');
     expect(sideForRatio({ x: 1, y: 0.5 })).toBe('right');
     expect(sideForRatio({ x: 0.5, y: 1 })).toBe('bottom');
     expect(sideForRatio({ x: 0, y: 0.5 })).toBe('left');
+  });
+
+  it('never puts a floating anchor on the point the far end holds', () => {
+    const shape = createShapeElement({
+      shape: 'process',
+      frame: { x: 0, y: 0, width: 100, height: 60 },
+    });
+    // The far end is the shape's own top connection point, which is what a
+    // connector joining this shape to itself looks like.
+    const top = { x: 50, y: 0 };
+    const resolved = resolveAnchor(shape, { mode: 'floating' }, top);
+    expect(resolved.point).not.toEqual(top);
   });
 
   it('picks the floating anchor that faces the other end', () => {
