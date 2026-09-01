@@ -907,6 +907,15 @@ release gate catches the rest: a tag push does not match `push.branches`, so
 without it the one build that is signed, notarised and published to users would
 be the only build never audited.
 
+The gate takes no ref from its caller. Letting it would mean a run holding
+write access to the default branch's caches checking out and running tooling
+over a ref someone else chose, which is a cache-poisoning shape CodeQL flags
+and is right to. A called workflow checks out the caller's own ref, which is
+the tag on a tag push. A release dispatched by hand against an older tag is
+therefore audited against the branch it was dispatched from; the fix for that
+belongs in the release workflow's own inputs, not in teaching this one to trust
+a ref.
+
 **Consequences.** The job's promise is exactly "no known vulnerability in the
 dependency tree", which is the promise worth gating a merge on. A new
 `unsound` notice does not fail the build; it appears in the job's log, and
