@@ -79,7 +79,7 @@ The short version:
 
 ### Prerequisites
 
-- **Node.js 20 or later** and npm
+- **Node.js 22.12 or later, or 24 or later**, and npm
 - **Rust** (stable) with the `aarch64-apple-darwin` target
 - **Xcode Command Line Tools** (`xcode-select --install`)
 

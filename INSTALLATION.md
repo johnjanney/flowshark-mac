@@ -95,7 +95,8 @@ These provide the compiler and linker macOS needs to build the app.
 
 ### 2. Install Node.js
 
-FlowShark needs Node.js 20 or later.
+FlowShark needs Node.js 22.12 or later, or Node.js 24 or later. Node.js 20
+no longer receives security fixes, and the test tools do not run on it.
 
 1. Check whether you already have it:
 
@@ -103,10 +104,15 @@ FlowShark needs Node.js 20 or later.
    node --version
    ```
 
-2. If that prints `v20.` or higher, skip to the next step.
+2. If that prints `v22.12` or a later `v22.` version, or `v24.` or higher,
+   skip to the next step.
 3. Otherwise download the **LTS** installer for macOS from
-   <https://nodejs.org/>, open the `.pkg` file, and follow the installer.
+   <https://nodejs.org/>, open the `.pkg` file, and follow the installer. It
+   replaces an older version that came from the same installer. If you
+   installed Node.js with Homebrew or nvm instead, update it with that tool.
 4. Close and reopen Terminal, then run `node --version` again to confirm.
+5. If you already ran `npm install` with an older Node.js, run `npm ci` in the
+   `flowshark-mac` folder to rebuild the dependencies.
 
 ### 3. Install Rust
 
