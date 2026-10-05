@@ -60,14 +60,17 @@ jobs:
         # without failing, which is `cargo audit`'s own default and is the
         # behaviour we want.
         #
-        # The tree currently carries seventeen `unmaintained` and `unsound`
-        # notices, every one of them arriving transitively through Tauri.
-        # Eleven are the GTK stack, which Tauri uses on Linux and a macOS
-        # build never compiles. Denying warnings would make this job red from
-        # the day it is added, over crates that cannot reach the product, and
-        # would leave someone maintaining an ignore list that grows every time
-        # an upstream crate is retired. The notices stay in this job's log
-        # where they can be read.
+        # The tree carries a handful of `unmaintained` and `unsound` notices,
+        # every one of them arriving transitively through Tauri. Some are the
+        # GTK stack (`glib` and what it pulls in), which Tauri uses on Linux
+        # and a macOS build never compiles. The rest are retired crates that
+        # Tauri does compile on macOS, such as the `unic-*` family under
+        # `urlpattern`, which only an upstream Tauri release can replace. The
+        # count moves as upstream crates are retired and replaced, so it is
+        # not written down here; the job's log has the current list. Denying
+        # warnings would make this job red over crates this repository cannot
+        # change, and would leave someone maintaining an ignore list that
+        # grows every time an upstream crate is retired.
         run: cargo audit
         working-directory: src-tauri
 
