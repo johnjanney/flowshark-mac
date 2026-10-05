@@ -47,7 +47,7 @@ jobs:
       # dispatched from rather than that tag. Closing it needs the release
       # workflow to stop taking an arbitrary tag, not this workflow to start
       # trusting one.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -74,12 +74,16 @@ jobs:
         run: cargo audit
         working-directory: src-tauri
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         # Only the lock file is needed, so there is nothing to install and
-        # nothing to cache.
+        # nothing to cache. From v6 the action turns caching on by itself
+        # when `package.json` names npm as its `packageManager`; it does not
+        # today, but this job runs with write access to the default branch's
+        # caches, so the off switch is stated rather than inherited.
         if: ${{ !cancelled() }}
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Audit the npm dependencies
         # The front end ships to users too, so the same promise has to cover
